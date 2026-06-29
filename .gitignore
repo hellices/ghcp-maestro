@@ -1,0 +1,25 @@
+# Node / npm — we are zero-deps but devs may experiment locally
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+npm-debug.log*
+yarn-error.log*
+
+# Scratch dirs used during SDK inspection
+_tmp/
+.tmp/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Plugin runtime state (lives outside the repo by default, but ignore if present)
+plugin-data/
+runs/
+
+# Build artefacts (none today, reserved for future M6/M7 work)
+dist/
+build/
