@@ -41,6 +41,7 @@ import {
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { renderMaestroHelp } from "./runtime/help.mjs";
+import { createMaestroRouter } from "./runtime/maestro-router.mjs";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -174,6 +175,28 @@ async function maestroHelp() {
   await session.log(renderMaestroHelp(MAESTRO_SUBCOMMANDS, { savedWorkflows: [...SAVED_WORKFLOWS.keys()] }));
 }
 
+// Shared dispatch — the same router backs the VS Code surface, so subcommand
+// parsing/validation/background semantics stay identical across surfaces. Only
+// the user-facing messages are surface-owned (session.log here).
+const maestroRouter = createMaestroRouter({
+  subcommands: MAESTRO_SUBCOMMANDS,
+  onHelp: () => maestroHelp(),
+  onUnknown: (head) =>
+    session.log(
+      `ghcp-maestro: unknown subcommand '${head}'. Run '/maestro help' for the list.`,
+      { level: "warning" },
+    ),
+  onMissingArg: (sc) =>
+    session.log(
+      `ghcp-maestro: /maestro ${sc.name} requires a ${sc.needsArg}. Example: /maestro ${sc.name} <${sc.needsArg}>`,
+      { level: "warning" },
+    ),
+  onBackgroundError: (sc, err) =>
+    session.log(`ghcp-maestro: ${sc.name} failed: ${err?.message ?? err}`, {
+      level: "error",
+    }),
+});
+
 const session = await joinSession({
   extensionInfo: {
     source: "ghcp-maestro",
@@ -184,49 +207,7 @@ const session = await joinSession({
       name: "maestro",
       description:
         "Run a ghcp-maestro workflow. Use '/maestro help' to list subcommands.",
-      handler: async (ctx) => {
-        const arg = (ctx?.args ?? "").trim();
-        if (arg === "" || arg === "help" || arg === "--help" || arg === "-h") {
-          await maestroHelp();
-          return;
-        }
-        const spaceIdx = arg.indexOf(" ");
-        const head = spaceIdx === -1 ? arg : arg.slice(0, spaceIdx);
-        const tail = spaceIdx === -1 ? "" : arg.slice(spaceIdx + 1).trim();
-        const sc = MAESTRO_SUBCOMMANDS.find((c) => c.name === head);
-        if (!sc) {
-          await session.log(
-            `ghcp-maestro: unknown subcommand '${head}'. Run '/maestro help' for the list.`,
-            { level: "warning" },
-          );
-          return;
-        }
-        if (sc.name === "help") {
-          await maestroHelp();
-          return;
-        }
-        if (sc.needsArg && !tail) {
-          await session.log(
-            `ghcp-maestro: /maestro ${sc.name} requires a ${sc.needsArg}. Example: /maestro ${sc.name} <${sc.needsArg}>`,
-            { level: "warning" },
-          );
-          return;
-        }
-        if (sc.background) {
-          // Fire-and-forget: return at once so the session stays free while the
-          // run fans out. The runner logs the runId and persists progress; watch
-          // it with /maestros. A detached rejection is logged, never unhandled.
-          Promise.resolve()
-            .then(() => sc.run(tail))
-            .catch((err) =>
-              session.log(`ghcp-maestro: ${sc.name} failed: ${err?.message ?? err}`, {
-                level: "error",
-              }),
-            );
-          return;
-        }
-        await sc.run(tail);
-      },
+      handler: async (ctx) => maestroRouter.dispatch(ctx?.args ?? ""),
     },
     {
       name: "maestros",
