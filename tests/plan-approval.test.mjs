@@ -64,7 +64,7 @@ test("a missing ui object is treated as non-interactive", async () => {
 });
 
 test("accepting with every subtask selected approves all of them", async () => {
-  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["alpha", "beta", "gamma"] } }));
+  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["0", "1", "2"] } }));
   const res = await planApprovalGate({ specs: SPECS, ui, capabilities: INTERACTIVE });
   assert.equal(res.approved, true);
   assert.equal(res.reason, "approved");
@@ -81,7 +81,8 @@ test("declining the dialog rejects the plan and selects nothing", async () => {
 });
 
 test("accepting a subset runs only the selected subtasks, in plan order", async () => {
-  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["gamma", "alpha"] } }));
+  // user picks index keys 2 then 0; selection still follows plan order
+  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["2", "0"] } }));
   const res = await planApprovalGate({ specs: SPECS, ui, capabilities: INTERACTIVE });
   assert.equal(res.approved, true);
   assert.equal(res.reason, "approved");
@@ -115,18 +116,20 @@ test("a dialog that throws fails closed (does not silently fan out)", async () =
 });
 
 test("the dialog offers every subtask and defaults to all selected", async () => {
-  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["alpha", "beta", "gamma"] } }));
+  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["0", "1", "2"] } }));
   await planApprovalGate({ specs: SPECS, ui, capabilities: INTERACTIVE });
   const params = ui.calls[0];
   const field = params.requestedSchema.properties.subtasks;
-  assert.deepEqual(field.items.enum, ["alpha", "beta", "gamma"]);
-  assert.deepEqual(field.default, ["alpha", "beta", "gamma"]);
+  // stable index keys, with human-readable labels carrying the agent names
+  assert.deepEqual(field.items.enum, ["0", "1", "2"]);
+  assert.deepEqual(field.items.enumNames, ["alpha", "beta", "gamma"]);
+  assert.deepEqual(field.default, ["0", "1", "2"]);
   assert.equal(params.requestedSchema.required.includes("subtasks"), true);
 });
 
 test("each subtask prompt preview is logged before the dialog", async () => {
   const logs = [];
-  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["alpha", "beta", "gamma"] } }));
+  const ui = fakeUi(() => ({ action: "accept", content: { subtasks: ["0", "1", "2"] } }));
   await planApprovalGate({
     specs: SPECS,
     ui,
@@ -135,4 +138,30 @@ test("each subtask prompt preview is logged before the dialog", async () => {
   });
   assert.equal(logs.some((l) => l.includes("alpha") && l.includes("do alpha")), true);
   assert.equal(logs.some((l) => l.includes("beta") && l.includes("do beta")), true);
+});
+
+test("duplicate agent names are selected independently by a stable key", async () => {
+  // Two subtasks share the agent name "dup". Selecting only the FIRST must
+  // approve exactly one spec — not both. The dialog offers stable index keys
+  // (with human-readable enumNames), so the reply references those keys.
+  const dupSpecs = [
+    { agent: "dup", prompt: "first" },
+    { agent: "solo", prompt: "middle" },
+    { agent: "dup", prompt: "second" },
+  ];
+  let captured;
+  const ui = {
+    calls: [],
+    async elicitation(params) {
+      captured = params;
+      return { action: "accept", content: { subtasks: ["0"] } };
+    },
+  };
+  const res = await planApprovalGate({ specs: dupSpecs, ui, capabilities: INTERACTIVE });
+  assert.equal(res.approved, true);
+  assert.equal(res.selected.length, 1);
+  assert.equal(res.selected[0].prompt, "first");
+  const field = captured.requestedSchema.properties.subtasks;
+  assert.deepEqual(field.items.enum, ["0", "1", "2"]);
+  assert.deepEqual(field.items.enumNames, ["dup", "solo", "dup"]);
 });

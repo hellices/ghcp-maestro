@@ -15,8 +15,10 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   abort; declining/cancelling marks the run `stopped` with no fan-out. The gate
   fails closed if the dialog errors. Non-interactive hosts (env probes, CI,
   headless), resume replays, and the `GHCP_MAESTRO_AUTO_APPROVE=1` bypass
-  approve every subtask automatically, so existing paths keep working. 11 new
-  unit tests (`tests/plan-approval.test.mjs`).
+  approve every subtask automatically, so existing paths keep working. The
+  dialog uses stable per-subtask index keys (with `enumNames` labels) so
+  duplicate agent names can't collapse a selection. 12 unit tests
+  (`tests/plan-approval.test.mjs`).
 - **M6 — quality helpers.** New `runtime/quality.mjs` builds four multi-agent
   patterns on top of `spawnAll`, each decoupled from any specific adapter and
   fully unit-tested with scripted adapters:
@@ -50,8 +52,8 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   tracked `.mjs`, and the `node:test` suite across Node 20 and 22) and
   `codeql.yml` (CodeQL `security-and-quality` analysis).
 - 43 new unit tests (`tests/quality.test.mjs`, `tests/saved-workflows.test.mjs`,
-  plus `buildPlanPrompt` / `sanitizeAgentName` coverage), and 11 more for the
-  M4.x approval gate (`tests/plan-approval.test.mjs`), for a total of 77.
+  plus `buildPlanPrompt` / `sanitizeAgentName` coverage), and 12 more for the
+  M4.x approval gate (`tests/plan-approval.test.mjs`), for a total of 78.
 
 ### Changed
 - Extension load banner now reads `… (M6 release) …` and reports discovered
