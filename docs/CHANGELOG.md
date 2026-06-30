@@ -7,15 +7,20 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
-- **Real-time in-TUI monitoring (issue #2).** New `runtime/monitor.mjs`
-  aggregates per-agent fan-out progress into a compact dashboard rendered via
-  throttled ephemeral host logs. The standalone adapter now subscribes to each
-  child session's events (`subagent.*`, `tool.execution_*`,
-  `assistant.streaming_delta`, `assistant.usage`) and forwards them through an
-  `onProgress` sink threaded by `spawn`/`spawnAll`. On by default for
-  `task`/`brainstorm`/`hello`; opt out with `GHCP_MAESTRO_NO_MONITOR=1`.
-  Monitoring is best-effort and never affects fan-out results. New unit tests:
-  `tests/monitor.test.mjs`, `tests/spawn-progress.test.mjs`,
+- **Background runs + `/maestros` monitoring (issue #2).** `/maestro
+  task|brainstorm|hello|run` now dispatch in the background — the handler returns
+  immediately with a `running in background — watch with /maestros <runId>`
+  pointer and the session stays free while the fan-out runs. Per-agent progress
+  (state, elapsed, streamed bytes, per-phase token totals) is aggregated by
+  `runtime/monitor.mjs` and persisted to the run dir as `progress.json`. Watch it
+  on demand: `/maestros` lists runs with a one-line progress summary for any still
+  running, and `/maestros <runId>` prints the full dashboard. The standalone
+  adapter subscribes to each child session's events (`subagent.*`,
+  `tool.execution_*`, `assistant.streaming_delta`, `assistant.usage`) through an
+  `onProgress` sink threaded by `spawn`/`spawnAll`. Monitoring is best-effort and
+  never affects fan-out results; opt out with `GHCP_MAESTRO_NO_MONITOR=1`.
+  New/updated unit tests across `tests/monitor.test.mjs`,
+  `tests/run-store.test.mjs`, `tests/spawn-progress.test.mjs`,
   `tests/standalone-progress.test.mjs`, `tests/monitor-enabled.test.mjs`.
 - **M4.x — plan pre-approval gate.** New `runtime/plan-approval.mjs` adds a
   `planApprovalGate` that runs after the `plan` agent decomposes a task but
