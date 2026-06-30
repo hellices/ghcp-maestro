@@ -1,28 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-// parseAndValidatePlan is module-internal — re-extract via dynamic require of
-// the extension module would also load joinSession() (and crash without
-// SESSION_ID). Easiest reliable approach is to copy the function under test
-// here. We assert the function in extension.mjs has the same source by
-// extracting it textually so the copy doesn't silently drift.
-
-async function loadParseFn() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const src = await readFile(
-    join(here, "..", "extensions", "ghcp-maestro", "extension.mjs"),
-    "utf8",
-  );
-  const match = src.match(/function parseAndValidatePlan\([\s\S]+?\n\}\n/);
-  if (!match) throw new Error("could not locate parseAndValidatePlan in extension.mjs");
-  // eslint-disable-next-line no-new-func
-  return new Function(`${match[0]}\nreturn parseAndValidatePlan;`)();
-}
-
-const parse = await loadParseFn();
+import {
+  parseAndValidatePlan as parse,
+  buildPlanPrompt,
+} from "../extensions/ghcp-maestro/runtime/plan.mjs";
 
 const VALID = JSON.stringify([
   { agent: "a", prompt: "do a" },
@@ -123,4 +104,19 @@ test("parseAndValidatePlan rejects oversized agent name", () => {
     { agent: "c", prompt: "p" },
   ]);
   assert.throws(() => parse(bad), /agent name too long/);
+});
+
+test("buildPlanPrompt includes the task and schema rules", () => {
+  const prompt = buildPlanPrompt("Build a CLI tool");
+  assert.match(prompt, /Build a CLI tool/);
+  assert.match(prompt, /JSON array/);
+  assert.match(prompt, /3 <= length <= 6/);
+  assert.doesNotMatch(prompt, /could not be parsed/);
+});
+
+test("buildPlanPrompt appends parser feedback on retry", () => {
+  const prompt = buildPlanPrompt("T", "JSON.parse failed: x", "not json");
+  assert.match(prompt, /could not be parsed/);
+  assert.match(prompt, /JSON\.parse failed: x/);
+  assert.match(prompt, /not json/);
 });

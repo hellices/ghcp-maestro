@@ -6,6 +6,11 @@ import { spawn, spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createLlmMediatedAdapter } from "./runtime/adapters/llm-mediated.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
 import { createRun, openRun, listRuns, defaultBaseDir } from "./runtime/run-store.mjs";
+import {
+  buildPlanPrompt,
+  parseAndValidatePlan,
+  sanitizeAgentName,
+} from "./runtime/plan.mjs";
 
 /** Lazily-initialised adapter shared across handler calls. */
 let standaloneAdapter = null;
@@ -783,109 +788,4 @@ async function runTaskWorkflow(session, task, opts = {}) {
     `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
   );
   return run;
-}
-
-function buildPlanPrompt(task, parserError, previousReply) {
-  const lines = [
-    "You are a planning agent for a dynamic multi-agent workflow runtime.",
-    "Decompose the following task into 3 to 6 INDEPENDENT subtasks that can run in parallel without seeing each other's output.",
-    "Each subtask runs in its own isolated Copilot session — there is no shared state, no chat history, no working directory you can rely on. Subtasks must therefore be self-contained: include any context they need inside the prompt itself.",
-    "",
-    "Reply with ONLY a JSON array. No prose, no markdown fences, no commentary. Schema:",
-    '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>" }, ... ]',
-    "",
-    'Rules:',
-    "- 3 <= length <= 6",
-    "- Every entry MUST have non-empty string `agent` and `prompt`",
-    "- `agent` values MUST be unique within the array",
-    "- Each `prompt` should produce a focused, finite answer in 1-2 short paragraphs or a small list. No open-ended exploration.",
-    "- Cover the task from genuinely different angles; do not duplicate.",
-    "",
-    `Task: ${task}`,
-  ];
-  if (parserError) {
-    lines.push(
-      "",
-      "Your previous reply could not be parsed. Parser error:",
-      parserError,
-      "",
-      "Previous reply (for reference, do NOT repeat the same mistake):",
-      previousReply ? previousReply.slice(0, 800) : "(empty)",
-      "",
-      "Return only the corrected JSON array, nothing else.",
-    );
-  }
-  return lines.join("\n");
-}
-
-function parseAndValidatePlan(text) {
-  if (!text) throw new Error("empty plan response");
-  let body = text.trim();
-
-  // Strip optional markdown fence wrappers — both multi-line and single-line.
-  // 1) ```json\n …\n ```        (block fence)
-  const blockFence = body.match(/^```(?:json|jsonc)?\s*\n([\s\S]*?)\n?\s*```$/i);
-  if (blockFence) {
-    body = blockFence[1].trim();
-  } else {
-    // 2) ``` … ```  (single-line fence)
-    const inlineFence = body.match(/^```(?:json|jsonc)?\s*([\s\S]*?)\s*```$/i);
-    if (inlineFence) body = inlineFence[1].trim();
-  }
-
-  // Locate the outermost JSON array.
-  const start = body.indexOf("[");
-  const end = body.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(
-      `response does not contain a JSON array: ${body.slice(0, 120)}${body.length > 120 ? "…" : ""}`,
-    );
-  }
-  let jsonText = body.slice(start, end + 1);
-  // Tolerate trailing commas — common LLM mistake (`{"a":1,}` or `[1,2,]`).
-  // Only strips commas immediately before `]` / `}` so we don't mutilate valid JSON.
-  jsonText = jsonText.replace(/,(\s*[}\]])/g, "$1");
-
-  let parsed;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch (err) {
-    throw new Error(`JSON.parse failed: ${err.message}`);
-  }
-  if (!Array.isArray(parsed)) throw new Error("plan must be an array");
-  if (parsed.length < 3 || parsed.length > 6) {
-    throw new Error(`plan must have 3-6 entries, got ${parsed.length}`);
-  }
-  const seen = new Set();
-  const normalized = [];
-  for (const [i, entry] of parsed.entries()) {
-    if (!entry || typeof entry !== "object") {
-      throw new Error(`entry ${i} is not an object`);
-    }
-    if (typeof entry.agent !== "string" || entry.agent.trim() === "") {
-      throw new Error(`entry ${i} missing string "agent"`);
-    }
-    if (typeof entry.prompt !== "string" || entry.prompt.trim() === "") {
-      throw new Error(`entry ${i} missing string "prompt"`);
-    }
-    const agent = entry.agent.trim();
-    if (agent.length > 60) {
-      throw new Error(`entry ${i} agent name too long (max 60 chars): ${agent.slice(0, 80)}…`);
-    }
-    if (seen.has(agent)) throw new Error(`duplicate agent name: ${agent}`);
-    seen.add(agent);
-
-    const prompt = entry.prompt.trim();
-    if (prompt.length > 4_000) {
-      throw new Error(
-        `entry ${i} (${agent}) prompt is ${prompt.length} chars — must be <= 4000 to keep child-session prompts focused`,
-      );
-    }
-    normalized.push({ agent, prompt });
-  }
-  return normalized;
-}
-
-function sanitizeAgentName(name) {
-  return name.replace(/[^a-zA-Z0-9-]+/g, "-").slice(0, 40) || "agent";
 }
