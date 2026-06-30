@@ -96,18 +96,52 @@ export function agentDigest(results, opts = {}) {
 }
 
 /**
+ * The trimmed body a dump line echoes. Only a null/undefined output collapses to
+ * "(empty)"; an explicit empty string stays empty after trimming.
+ * @param {AgentResultLike} result
+ * @returns {string}
+ */
+function dumpBody(result) {
+  return (result?.output?.text ?? "(empty)").trim();
+}
+
+/**
  * The per-agent "FULL ↓" dump line that echoes a subagent's whole output into
- * the session log. Mirrors the pre-refactor inline form exactly: only a
- * null/undefined output collapses to "(empty)"; an explicit empty string stays
- * empty after trimming.
+ * the session log.
  * @param {string} runId
  * @param {AgentResultLike} result
  * @returns {string}
  */
 export function exploreFullDumpLine(runId, result) {
   const agent = result?.spec?.agent;
-  const body = (result?.output?.text ?? "(empty)").trim();
-  return `ghcp-maestro/${runId}: explore/${agent} FULL ↓\n${body}`;
+  return `ghcp-maestro/${runId}: explore/${agent} FULL ↓\n${dumpBody(result)}`;
+}
+
+/**
+ * A labelled full-output dump (e.g. synth's "FINAL ANSWER ↓" / "TOP 3 NEXT
+ * STEPS ↓"). Same body semantics as exploreFullDumpLine but with a caller-chosen
+ * header instead of "explore/<agent> FULL".
+ * @param {string} runId
+ * @param {string} label
+ * @param {AgentResultLike} result
+ * @returns {string}
+ */
+export function labeledDumpLine(runId, label, result) {
+  return `ghcp-maestro/${runId}: ${label} ↓\n${dumpBody(result)}`;
+}
+
+/**
+ * The synth-phase status line. The task workflow appends a wall-clock segment;
+ * the brainstorm workflow omits it.
+ * @param {string} runId
+ * @param {AgentResultLike} result
+ * @param {{ wallMs?: number }} [opts]
+ * @returns {string}
+ */
+export function synthStatusLine(runId, result, opts = {}) {
+  const took = result.finishedAt - result.startedAt;
+  const wall = opts.wallMs != null ? ` wall=${opts.wallMs}ms` : "";
+  return `ghcp-maestro/${runId}: synth status=${result.status}${cachedTag(result)} took=${took}ms${wall}`;
 }
 
 /**

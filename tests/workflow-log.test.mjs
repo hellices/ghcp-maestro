@@ -8,6 +8,8 @@ import {
   agentDigest,
   exploreFullDumpLine,
   logExploreResults,
+  labeledDumpLine,
+  synthStatusLine,
 } from "../extensions/ghcp-maestro/runtime/workflow-log.mjs";
 
 // A minimal AgentResult-like shape, matching what spawnAll returns.
@@ -132,4 +134,35 @@ test("logExploreResults appends a warning-level failure summary when some agents
   const last = calls.at(-1);
   assert.match(last[0], /1\/2 subtask agent\(s\) failed/);
   assert.deepEqual(last[1], { level: "warning" });
+});
+
+test("labeledDumpLine dumps trimmed output under a custom label header", () => {
+  assert.equal(
+    labeledDumpLine("run1", "FINAL ANSWER", res("synth", "ok", "  the answer  ")),
+    "ghcp-maestro/run1: FINAL ANSWER ↓\nthe answer",
+  );
+  assert.equal(
+    labeledDumpLine("run1", "TOP 3 NEXT STEPS", res("synth", "ok", "a\nb\nc")),
+    "ghcp-maestro/run1: TOP 3 NEXT STEPS ↓\na\nb\nc",
+  );
+});
+
+test("labeledDumpLine falls back to (empty) only for missing output", () => {
+  assert.equal(
+    labeledDumpLine("run1", "FINAL ANSWER", { spec: { agent: "synth" }, output: {} }),
+    "ghcp-maestro/run1: FINAL ANSWER ↓\n(empty)",
+  );
+});
+
+test("synthStatusLine renders the brainstorm variant (no wall)", () => {
+  const r = res("synth", "ok", "x", { startedAt: 0, finishedAt: 1500 });
+  assert.equal(synthStatusLine("run1", r), "ghcp-maestro/run1: synth status=ok took=1500ms");
+});
+
+test("synthStatusLine renders the task variant (with wall) and cached tag", () => {
+  const r = res("synth", "ok", "x", { startedAt: 0, finishedAt: 1500, cached: true });
+  assert.equal(
+    synthStatusLine("run1", r, { wallMs: 200 }),
+    "ghcp-maestro/run1: synth status=ok (cached) took=1500ms wall=200ms",
+  );
 });
