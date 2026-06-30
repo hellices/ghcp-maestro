@@ -51,12 +51,19 @@ them, and emits them through a new `onProgress` sink threaded by
 ## Shared contracts (used across tasks)
 
 **Partial progress** (emitted by an adapter through `ctx.onProgress`):
-`{ state: "running" | "streaming" | "tool", bytes?: number, tool?: string }`
+`{ state: "running" | "streaming" | "tool", bytes?: number, tool?: string, tokens?: number }`
 
 **ProgressEvent** (enriched by `spawn`, consumed by the monitor):
-`{ agent: string|null, specId: string, state: string, bytes?: number, tool?: string, ts: number }`
+`{ agent: string|null, specId: string, state: string, bytes?: number, tool?: string, tokens?: number, ts: number }`
 
 **Monitor agent states:** `pending | running | streaming | tool | done | failed`.
+
+> **Token totals (design §2 / §4b):** `tokens` is the per-event token delta from
+> the child's `assistant.usage` event (`inputTokens + outputTokens`). The monitor
+> accumulates it per agent and sums per phase so the dashboard header shows a
+> phase token total — parity with Claude Code's `/workflows` progress view. The
+> tasks below include the `tokens` field end-to-end; v2 parity items (drill-down,
+> pause/stop/restart) are tracked in the design doc §11, not this v1 plan.
 
 ---
 
@@ -71,11 +78,13 @@ them, and emits them through a new `onProgress` sink threaded by
 - Produces:
   - `createMonitor({ label, render, now?, throttleMs? }) => Monitor`
   - `Monitor.seed(specs: Array<{ id: string, agent: string }>): void`
-  - `Monitor.onProgress(evt: { specId, agent?, state, bytes?, tool?, ts? }): void`
+  - `Monitor.onProgress(evt: { specId, agent?, state, bytes?, tool?, tokens?, ts? }): void`
   - `Monitor.settle(specId: string, ok: boolean): void`
   - `Monitor.flush(): void`
   - `Monitor.format(): string`
   - `now` defaults to `Date.now`; `throttleMs` defaults to `500`.
+  - `onProgress` accumulates `tokens` per agent; `format()` shows a per-phase
+    token total in the header and a per-agent token column (design §2 / §4b).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -155,6 +164,17 @@ test("streamed bytes are shown once known", () => {
   assert.match(monitor.format(), /2(\.0)?\s?KB/);
 });
 
+test("tokens accumulate per agent and sum into the phase header", () => {
+  const { monitor } = harness();
+  monitor.seed([{ id: "e0", agent: "alpha" }, { id: "e1", agent: "beta" }]);
+  monitor.onProgress({ specId: "e0", state: "running", tokens: 1000 });
+  monitor.onProgress({ specId: "e0", state: "streaming", tokens: 500 }); // alpha: 1500
+  monitor.onProgress({ specId: "e1", state: "running", tokens: 2000 }); // beta: 2000
+  const out = monitor.format();
+  // per-phase total 3500 in the header, abbreviated to "3.5K tok"
+  assert.match(out, /3\.5K tok/);
+});
+
 test("an unknown specId is ignored, never throws", () => {
   const { monitor } = harness();
   monitor.seed([{ id: "e0", agent: "alpha" }]);
@@ -198,7 +218,7 @@ export function createMonitor(opts) {
   const now = opts.now ?? Date.now;
   const throttleMs = opts.throttleMs ?? 500;
   const label = opts.label ?? "ghcp-maestro";
-  const agents = new Map(); // specId -> { id, agent, state, bytes, startTs, lastTs }
+  const agents = new Map(); // specId -> { id, agent, state, bytes, tokens, startTs, lastTs }
   let lastRenderTs = -Infinity;
 
   function doRender() {
@@ -222,13 +242,16 @@ export function createMonitor(opts) {
     const list = [...agents.values()];
     const done = list.filter((a) => a.state === "done" || a.state === "failed").length;
     const maxElapsed = list.reduce((m, a) => Math.max(m, now() - a.startTs), 0);
-    const header = `${label} · ${done}/${list.length} done · ${mmss(maxElapsed)}`;
+    const totalTokens = list.reduce((m, a) => m + a.tokens, 0);
+    const tokTotal = totalTokens ? ` · ${ktok(totalTokens)} tok` : "";
+    const header = `${label} · ${done}/${list.length} done · ${mmss(maxElapsed)}${tokTotal}`;
     const rows = list.map((a) => {
       const glyph = GLYPH[a.state] ?? "·";
       const secs = `${Math.round((now() - a.startTs) / 1000)}s`;
       const bytes = a.bytes ? `  ${kb(a.bytes)}` : "";
       const tool = a.state === "tool" && a.tool ? `  (${a.tool})` : "";
-      return `  ${glyph} ${a.agent}  ${a.state}  ${secs}${bytes}${tool}`;
+      const tok = a.tokens ? `  ${ktok(a.tokens)} tok` : "";
+      return `  ${glyph} ${a.agent}  ${a.state}  ${secs}${bytes}${tool}${tok}`;
     });
     return [header, ...rows].join("\n");
   }
@@ -241,6 +264,7 @@ export function createMonitor(opts) {
           agent: s.agent,
           state: "pending",
           bytes: 0,
+          tokens: 0,
           startTs: now(),
           lastTs: now(),
         });
@@ -251,6 +275,7 @@ export function createMonitor(opts) {
       if (!a) return;
       if (evt.state) a.state = evt.state;
       if (typeof evt.bytes === "number") a.bytes = Math.max(a.bytes, evt.bytes);
+      if (typeof evt.tokens === "number") a.tokens += evt.tokens;
       if (evt.tool) a.tool = evt.tool;
       a.lastTs = now();
       maybeRender(a.state);
@@ -279,12 +304,16 @@ function mmss(ms) {
 function kb(bytes) {
   return `${(bytes / 1024).toFixed(1)}KB`;
 }
+
+function ktok(tokens) {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}K` : String(tokens);
+}
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/monitor.test.mjs`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -489,6 +518,21 @@ test("normalizeChildEvent maps tool start to a tool state", () => {
   assert.deepEqual(p, { state: "tool", tool: "read" });
 });
 
+test("normalizeChildEvent maps usage to a token delta", () => {
+  const p = normalizeChildEvent({
+    type: "assistant.usage",
+    data: { inputTokens: 800, outputTokens: 200 },
+  });
+  assert.deepEqual(p, { state: "running", tokens: 1000 });
+});
+
+test("normalizeChildEvent tolerates partial usage fields", () => {
+  assert.deepEqual(
+    normalizeChildEvent({ type: "assistant.usage", data: { outputTokens: 50 } }),
+    { state: "running", tokens: 50 },
+  );
+});
+
 test("normalizeChildEvent maps run-ish lifecycle events to running", () => {
   for (const type of ["subagent.started", "assistant.turn_start", "tool.execution_complete"]) {
     assert.deepEqual(normalizeChildEvent({ type }), { state: "running" });
@@ -543,7 +587,7 @@ bottom (next to `extractText`):
  * Translate a raw child CopilotSession event into a normalized progress partial,
  * or null when the event is not progress-relevant.
  * @param {{ type?: string, data?: any }} event
- * @returns {{ state: string, bytes?: number, tool?: string } | null}
+ * @returns {{ state: string, bytes?: number, tool?: string, tokens?: number } | null}
  */
 export function normalizeChildEvent(event) {
   switch (event?.type) {
@@ -555,6 +599,10 @@ export function normalizeChildEvent(event) {
       return { state: "streaming", bytes: event.data?.totalResponseSizeBytes };
     case "tool.execution_start":
       return { state: "tool", tool: event.data?.toolName };
+    case "assistant.usage": {
+      const tokens = (event.data?.inputTokens ?? 0) + (event.data?.outputTokens ?? 0);
+      return { state: "running", tokens };
+    }
     default:
       return null;
   }
@@ -611,7 +659,7 @@ and in the existing `finally` block, unsubscribe before disconnecting:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/standalone-progress.test.mjs`
-Expected: PASS (7 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 5: Syntax-check the touched adapter (it imports the SDK lazily)**
 
@@ -832,8 +880,12 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
   `monitorEnabled` opt-out in Task 4. ✓
 - "Testable: pure aggregator + fake clock; normalization with fake emitter" →
   Tasks 1 and 3. ✓
-- Phasing: this plan is v1 (Approach A) only; the optional Canvas panel (v2) is
-  intentionally out of scope (see design §11). ✓
+- "Per-phase token totals (design §2 / §4b)" → `tokens` threaded through the
+  Partial/ProgressEvent contracts, accumulated in Task 1's monitor, and sourced
+  from `assistant.usage` in Task 3's `normalizeChildEvent`. ✓
+- Phasing: this plan is v1 (Approach A + token totals). The v2 `/workflows`-parity
+  items — drill-down, pause/stop/restart, and the optional Canvas panel — are
+  intentionally out of scope here (see design §11). ✓
 
 **Placeholder scan:** No "TBD"/"handle edge cases"/"similar to" — every code step
 has complete code. ✓
