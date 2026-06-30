@@ -62,7 +62,7 @@ jobs:
       - name: Verify changelog has this version
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          if ! grep -q "^## \[$tag\]" docs/CHANGELOG.md; then
+          if ! grep -qF "## [$tag]" docs/CHANGELOG.md; then
             echo "::error file=docs/CHANGELOG.md::no '## [$tag]' section"
             exit 1
           fi
@@ -74,13 +74,13 @@ jobs:
           echo "$list"
           fail=0
           for bad in "tests/" "docs/specs/" "docs/PLAN.md" "docs/REQUIREMENTS.md" "docs/RELEASING.md" "eslint.config.mjs" ".github/workflows/" "AGENTS.md" "package-lock.json"; do
-            if echo "$list" | grep -q "$bad"; then
+            if echo "$list" | grep -qF "$bad"; then
               echo "::error::release archive leaks dev-only path: $bad"
               fail=1
             fi
           done
           for need in "plugin.json" "extensions/ghcp-maestro/extension.mjs" ".github/plugin/marketplace.json" "LICENSE"; do
-            if ! echo "$list" | grep -q "$need"; then
+            if ! echo "$list" | grep -qF "$need"; then
               echo "::error::release archive is missing required path: $need"
               fail=1
             fi
@@ -91,7 +91,13 @@ jobs:
       - name: Extract release notes from changelog
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          awk "/^## \[$tag\]/{f=1;next} /^## \[/{f=0} f" docs/CHANGELOG.md > RELEASE_NOTES.md
+          # Match headings by exact string, not regex (SemVer dots would be
+          # wildcards). Start at "## [<tag>]", stop at the next "## [" heading.
+          awk -v want="## [$tag]" '
+            index($0, want) == 1 { f = 1; next }
+            index($0, "## [") == 1 { f = 0 }
+            f
+          ' docs/CHANGELOG.md > RELEASE_NOTES.md
           echo "----- release notes -----"
           cat RELEASE_NOTES.md
 

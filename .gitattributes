@@ -5,8 +5,9 @@
 
 # Keep development-only files out of release archives (GitHub release source
 # tarballs and `git archive` honor export-ignore). The installable plugin only
-# needs plugin.json + extensions/ + README/LICENSE/CHANGELOG; everything below is
-# dev tooling, tests, CI, and design docs.
+# needs plugin.json + extensions/ + .github/plugin/marketplace.json +
+# README/LICENSE/CHANGELOG; everything below is dev tooling, tests, CI, and
+# design docs.
 /AGENTS.md export-ignore
 /docs/PLAN.md export-ignore
 /docs/REQUIREMENTS.md export-ignore
