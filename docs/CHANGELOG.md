@@ -7,6 +7,79 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **M6 — quality helpers.** New `runtime/quality.mjs` builds four multi-agent
+  patterns on top of `spawnAll`, each decoupled from any specific adapter and
+  fully unit-tested with scripted adapters:
+  - `adversarialReview(findings, { reviewers, threshold })` — independent
+    reviewers try to rebut each finding; survivors are those judged valid by at
+    least `threshold` of their reviewers.
+  - `multiAngle(task, { angles })` — drafts the task from several angles in
+    parallel, then a judge agent picks or merges the strongest draft.
+  - `fixLoop({ check, applyFix, maxIters })` — re-runs `check` until it passes
+    (or `maxIters`), dispatching a fix agent between failed checks.
+  - `crossCheck(claims, { sources })` — verifies each claim across multiple
+    perspectives and aggregates a support rate.
+- **M5 — saved workflows.** New `runtime/saved-workflows.mjs` discovers,
+  validates, and runs project/user/bundled workflow scripts:
+  - scan order project (`./.ghcp-maestro/workflows` or
+    `$GHCP_MAESTRO_WORKFLOWS_DIR`) > user (`<dataDir>/workflows`) > bundled
+    (`saved-workflows/`), with kebab-case + reserved-name validation and
+    priority-based de-duplication;
+  - `buildWorkflowApi` injects a sandboxed `api` (bound `spawn`/`spawnAll`,
+    `phase`, `log`, structured `args`, plus the M6 quality helpers) so scripts
+    never touch the filesystem, shell, or SDK directly;
+  - new commands `/maestro run <name> [json|text args]` and
+    `/maestro workflows`; runs persist as `workflow=saved:<name>` so they show
+    in `/maestros` and can be resumed;
+  - bundled example `saved-workflows/deep-review.mjs`.
+- **Dev tooling + CI.** Root `package.json` with `test` / `lint` / `check`
+  scripts and an ESLint flat config (`eslint.config.mjs`). The runtime stays
+  zero-dependency; ESLint and friends are `devDependencies` only. A
+  `no-console` rule enforces JSON-RPC-safe logging in extension/runtime code.
+- GitHub Actions: `ci.yml` (ESLint static analysis, `node --check` on every
+  tracked `.mjs`, and the `node:test` suite across Node 20 and 22) and
+  `codeql.yml` (CodeQL `security-and-quality` analysis).
+- 43 new unit tests (`tests/quality.test.mjs`, `tests/saved-workflows.test.mjs`,
+  plus `buildPlanPrompt` / `sanitizeAgentName` coverage) for a total of 66.
+
+### Changed
+- Extension load banner now reads `… (M6 release) …` and reports discovered
+  saved workflows.
+- Plan generation/parsing extracted from `extension.mjs` into the importable,
+  pure `runtime/plan.mjs` (`buildPlanPrompt`, `parseAndValidatePlan`,
+  `sanitizeAgentName`). `tests/plan-parse.test.mjs` now imports the module
+  directly instead of regex-extracting the function source.
+- Resume resolves both built-in and `saved:<name>` workflows via a single
+  `resolveWorkflowHandler`.
+- Line endings normalized to LF across the tree (per `.gitattributes`); the
+  lockfile is now committed so CI can `npm ci` reproducibly.
+
+### Fixed
+- **Review hardening (CodeRabbit / CodeQL on PR #1).**
+  - `quality.mjs`: `adversarialReview` and `crossCheck` now group agent results
+    by an exact per-item spec-id set (folding in the item index) instead of a
+    string prefix, so findings/claims whose ids share a prefix (e.g. `a` and
+    `a-r1`) can no longer cross-contaminate scores; `crossCheck` maps each
+    verdict back to its source explicitly rather than by positional index.
+  - `quality.mjs`: `defaultSupportParser` checks negative phrasing first, so
+    `NOT SUPPORTED` / `UNSUPPORTED` / `SUPPORTED: NO` are no longer misread as
+    supported.
+  - `saved-workflows.mjs`: an unreadable (non-`ENOENT`) workflow directory is
+    now recorded as `skipped` and skipped instead of aborting the whole scan;
+    `parseWorkflowArgs` rejects JSON arrays so structured args are always plain
+    objects; `buildWorkflowApi` helper wrappers tolerate a missing `extra` arg.
+  - `extension.mjs`: failed resume and a missing saved-workflow descriptor now
+    transition the run to `error` instead of leaving it stuck as `running`;
+    `task`/`brainstorm` runs fail (status `error`) when every fan-out agent
+    fails or when `synth` fails, and log per-agent failures otherwise.
+  - `plan.mjs`: agent-id truncation length is now the named `MAX_AGENT_ID_LEN`
+    constant instead of a magic number.
+  - ESLint bans direct `process.stdout/stderr.write` in extension/runtime code
+    (only `session.log()` is JSON-RPC-safe); CI/CodeQL checkouts run with
+    `persist-credentials: false`; `plugin.json` declares its `extensions` entry
+    and `repository` metadata explicitly.
+
+### M4 (previously unreleased)
 - **M4 — meta-prompt task workflow.** `/maestro task <natural-language task>`
   launches a 3-phase run (`plan` → `explore[N]` → `synth`). The `plan` agent
   uses an LLM to decompose the task into 3-6 independent subtasks emitted as a
@@ -19,20 +92,6 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   retry pass that feeds the parser error back to the planner.
 - `/maestro help` (and `/maestro` with no args) prints all subcommands with
   short summaries, sourced from a single data-driven registry.
-- Unit tests for the plan parser (`tests/plan-parse.test.mjs`, 11 cases).
-- README updated with a quickstart, env-trigger examples, and the adapter
-  comparison table now naming the workflows wired to each adapter.
-- CHANGELOG (this file).
-
-### Changed
-- Extension load banner now reads
-  `ghcp-maestro extension loaded (M4 release). Run '/maestro help' for subcommands.`
-- Removed unused `dummyAdapter` import from `extension.mjs`; the dummy adapter
-  remains available to tests through `runtime/spawn.mjs`.
-- Documentation (`docs/REQUIREMENTS.md`, `docs/PLAN.md`, `AGENTS.md`) brought
-  in line with the implementation: actual extension dir `extensions/ghcp-maestro/`,
-  data dir `~/.copilot/plugin-data/ghcp-maestro/`, manifest at repo root,
-  adapter (B) ruled out, milestone status (`✅`/`❌`) per phase.
 
 ## [0.0.3 — M3, 2026-06-29]
 

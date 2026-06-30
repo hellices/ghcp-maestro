@@ -1,6 +1,6 @@
-# Node / npm — we are zero-deps but devs may experiment locally
+# Node / npm — runtime is zero-deps; dev tooling (eslint) lives under devDependencies.
+# node_modules stays ignored, but the lockfile is committed for reproducible CI.
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 npm-debug.log*

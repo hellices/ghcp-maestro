@@ -243,25 +243,39 @@ task workflow complete — 7 agents across 3 phases
 
 ---
 
-## Phase 5 — M5 저장 / 재실행 (다음)
+## Phase 5 — M5 저장 / 재실행 (완료)
 
-- `saved-workflows/<name>.mjs` 디렉토리
-- extension 로드 시 스캔 → `joinSession({ commands })` 에 동적 추가 등록 (`/<name>` 또는 단일 `/maestro run <name>` dispatcher)
-- `args` 전역 inject (M4 task workflow 와 같은 채널)
-- 이름 충돌 시 프로젝트 > 개인 우선
-- (선택) M4.x — `session.ui.elicitation` 으로 plan 결과 (subtask 목록 + 각 prompt preview) 사전 승인 UI
+### 산출물
+- `extensions/ghcp-maestro/runtime/saved-workflows.mjs`:
+  - `defaultWorkflowDirs` (project `./.ghcp-maestro/workflows` 또는 `$GHCP_MAESTRO_WORKFLOWS_DIR` > user `<dataDir>/workflows` > bundled `saved-workflows/`)
+  - `scanSavedWorkflows` — kebab-case + reserved-name 검증, 우선순위 dedupe, skip 사유 수집
+  - `loadSavedWorkflow` — dynamic import + default/`run` export 검증
+  - `buildWorkflowApi` — sandboxed `api` (bound `spawn`/`spawnAll`/`phase`/`log`/`args` + M6 helper). 스크립트는 FS/shell/SDK 직접 호출 안 함.
+  - `parseWorkflowArgs` — JSON object 또는 평문(=>`{input}`)
+- `extension.mjs` — 부팅 시 스캔 → `/maestro run <name> [args]` / `/maestro workflows`, `saved:<name>` run 영속화 + resume resolver
+- `saved-workflows/deep-review.mjs` — bundled 예제 (multiAngle → adversarialReview)
+- `tests/saved-workflows.test.mjs` — 11 케이스
+
+### M5 acceptance criteria
+- [x] `saved-workflows/<name>.mjs` 디렉토리 스캔
+- [x] 동적 슬래시 (`/maestro run <name>`) + `args` global inject
+- [x] 이름 충돌 시 프로젝트 > 개인(> bundled) 우선
+- [x] RunStore 통합 (`/maestros`, `/maestro-resume` 동작)
+- (선택) M4.x — `session.ui.elicitation` plan 사전 승인 UI 는 미구현 (이연)
 
 ---
 
-## Phase 6 — M6 품질 helper
+## Phase 6 — M6 품질 helper (완료)
 
-`extensions/ghcp-maestro/runtime/quality/` 모듈:
-- `adversarialReview(findings, { reviewers })`
-- `multiAngle(task, { angles })`
-- `fixLoop({ build, test, maxIters })`
-- `crossCheck(claims, { sources })`
+### 산출물
+- `extensions/ghcp-maestro/runtime/quality.mjs` (`spawnAll` 위, adapter 비종속):
+  - `adversarialReview(findings, { reviewers, threshold })`
+  - `multiAngle(task, { angles })`
+  - `fixLoop({ check, applyFix, maxIters })`
+  - `crossCheck(claims, { sources })`
+- `tests/quality.test.mjs` — 15 케이스 (scripted adapter 로 결정적 검증)
 
-각 helper 는 위 `spawnAll` 위에 구축. multi-reviewer voting 으로 신뢰도 스코어링하는 패턴 등 multi-agent quality pattern 차용.
+각 helper 는 prompt builder / verdict parser 주입 가능 → 라이브 모델 없이 단위 테스트.
 
 ---
 
@@ -304,10 +318,8 @@ routing 등 고급 옵션 노출.
 
 ## 다음 즉시 액션
 
-Phase 4 / M4 완료. 다음:
+Phase 5 / M5 + Phase 6 / M6 + CI 완료. 다음:
 
 1. **M4.x** (선택, 작음): `session.ui.elicitation` 으로 plan 결과 (subtask 목록 + 각 prompt 미리보기) 사전 승인 UI
-2. **M5** saved workflows — `saved-workflows/<name>.mjs` 동적 슬래시 + `args` global. `extensions/ghcp-maestro/extension.mjs` 로드 시 스캔 → 추가 commands 등록.
-3. **M6** quality helpers — `adversarialReview`, `multiAngle`, `fixLoop`, `crossCheck` (`spawnAll` 위에 구축)
-4. **M7** VS Code surface — 별도 `vscode-extension/` 패키지, chat participant + TreeView
-5. **릴리스 준비** — `marketplace.json`, `copilot plugin install` 흐름 검증, 데모 가이드, 보안 검토
+2. **M7** VS Code surface — 별도 `vscode-extension/` 패키지, chat participant + TreeView
+3. **릴리스 준비** — `marketplace.json`, `copilot plugin install` 흐름 검증, 데모 가이드, 보안 검토

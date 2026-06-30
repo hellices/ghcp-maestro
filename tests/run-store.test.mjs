@@ -10,7 +10,7 @@ import {
   readJson,
   writeJsonAtomic,
 } from "../extensions/ghcp-maestro/runtime/run-store.mjs";
-import { spawnAll, dummyAdapter } from "../extensions/ghcp-maestro/runtime/spawn.mjs";
+import { spawnAll } from "../extensions/ghcp-maestro/runtime/spawn.mjs";
 
 async function freshBase() {
   return mkdtemp(join(tmpdir(), "ghcp-maestro-test-"));
