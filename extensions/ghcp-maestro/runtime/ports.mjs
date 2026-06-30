@@ -35,6 +35,7 @@
  * @property {(input: MaestroCommandInput, ctx?: { logPort?: LogPort, uiSink?: UiSinkPort, cancellation?: CancellationPort }) => Promise<unknown>} runCommand
  * @property {(runId: string) => Promise<void>} resumeRun
  * @property {(runId: string) => Promise<void>} stopRun
+ * @property {(sel: { runId: string, phase: string, agentId: string }) => Promise<void>} [retryAgent] - re-run a single agent in place (UI drill-down action)
  */
 
 /**

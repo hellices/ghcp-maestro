@@ -50,12 +50,40 @@
     "commands": [
       {
         "command": "ghcp-maestro.openConsole",
-        "title": "Maestro: Open Run Console"
+        "title": "Maestro: Open Run Console",
+        "icon": "$(window)"
       },
       {
         "command": "ghcp-maestro.retryAgent",
-        "title": "Maestro: Retry Agent"
+        "title": "Maestro: Retry Agent",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ghcp-maestro.openConsole",
+          "when": "view == maestroRuns",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ghcp-maestro.retryAgent",
+          "when": "view == maestroRuns && viewItem == agent",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Maestro",
+      "properties": {
+        "maestro.copilotPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the Copilot CLI binary used to spawn isolated agent sessions. Required on the VS Code surface because `process.execPath` is the VS Code Electron runtime, not Copilot. Leave empty to use the `COPILOT_CLI_PATH` environment variable."
+        }
+      }
+    }
   }
 }
