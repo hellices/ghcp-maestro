@@ -26,7 +26,9 @@ external service.
 Each subtask runs in its own child Copilot session, concurrently (default 16 at
 a time, hard cap 1000). The host conversation stays clean, every subtask gets a
 fresh context window, and the wall-clock time collapses to roughly the slowest
-single subtask instead of their sum.
+single subtask instead of their sum. Each agent has a generous timeout
+(research agents default to 10 minutes); for very long research runs, raise it
+with `GHCP_MAESTRO_TIMEOUT_MS=<ms>`.
 
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final

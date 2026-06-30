@@ -6,6 +6,20 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+### Fixed
+- **Task subagents no longer time out on research-heavy runs.** The task
+  workflow's plan/explore/synth phases (and the brainstorm lenses) run full
+  research subagents — web fetches, repo analysis, many tool calls + extended
+  reasoning — whose wall-clock routinely exceeds the old hard-coded 120 s limit,
+  so every subtask could fail with `status=timeout` and produce no output.
+  Timeouts are now two tiers: research agents default to **10 min**
+  (`GHCP_MAESTRO_TIMEOUT_MS`) — matching the ~600 s floor of a single LLM API
+  call in the major LLM provider SDKs — and the fixed-prompt diagnostics
+  (`pong`/`hello`/env probes) stay short at **1 min**
+  (`GHCP_MAESTRO_TIMEOUT_PROBE_MS`) so a slow one still fails fast. When a task
+  aborts on timeouts, the failure message points to `GHCP_MAESTRO_TIMEOUT_MS`.
+  New unit tests: `tests/timeouts.test.mjs`.
+
 ### Changed
 - **Diagnostics hidden from `/maestro help`.** `hello` and `pong` are
   infrastructure smoke tests, not user features — they now carry a `hidden` flag
