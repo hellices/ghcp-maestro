@@ -14,11 +14,7 @@ import {
 } from "./runtime/plan.mjs";
 import { planApprovalGate } from "./runtime/plan-approval.mjs";
 import { failRun } from "./runtime/run-flow.mjs";
-import {
-  TIMEOUT_AGENT_MS,
-  TIMEOUT_EXPLORE_MS,
-  TIMEOUT_LONG_MS,
-} from "./runtime/timeouts.mjs";
+import { TIMEOUT_AGENT_MS } from "./runtime/timeouts.mjs";
 import {
   runEchoProbe,
   runAgentRegistrySpawnProbe,
@@ -592,7 +588,7 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
       "",
       "Reply with 3-5 short bullet points. Be concrete and specific to this topic. No preamble, no 'as an AI', just the bullets.",
     ].join("\n"),
-    timeoutMs: TIMEOUT_EXPLORE_MS,
+    timeoutMs: TIMEOUT_AGENT_MS,
   }));
 
   const monitor = monitorEnabled(process.env)
@@ -646,7 +642,7 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
 
   const t2 = Date.now();
   const [synth] = await spawnAll(
-    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: TIMEOUT_LONG_MS }],
+    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: TIMEOUT_AGENT_MS }],
     { adapter, runHandle: run },
   );
   const phase2Elapsed = Date.now() - t2;
@@ -701,7 +697,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const planSpec = {
     id: "plan",
     agent: "plan",
-    timeoutMs: TIMEOUT_LONG_MS,
+    timeoutMs: TIMEOUT_AGENT_MS,
     prompt: buildPlanPrompt(task),
   };
   const [planResult] = await spawnAll([planSpec], { adapter, runHandle: run });
@@ -730,7 +726,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
     const retrySpec = {
       id: "plan-retry",
       agent: "plan",
-      timeoutMs: TIMEOUT_LONG_MS,
+      timeoutMs: TIMEOUT_AGENT_MS,
       prompt: buildPlanPrompt(task, err.message, planText),
     };
     const [retryResult] = await spawnAll([retrySpec], { adapter, runHandle: run });
@@ -793,7 +789,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
     id: `explore-${i}-${sanitizeAgentName(s.agent)}`,
     agent: s.agent,
     prompt: s.prompt,
-    timeoutMs: TIMEOUT_LONG_MS,
+    timeoutMs: TIMEOUT_AGENT_MS,
   }));
   const monitor = monitorEnabled(process.env)
     ? createMonitor({
@@ -822,10 +818,14 @@ async function runTaskWorkflow(session, task, opts = {}) {
     log: (msg, opts) => session.log(msg, opts),
   });
   if (allFailed(exploreResults)) {
+    const timedOut = exploreResults.some((r) => r.status === "timeout");
+    const hint = timedOut
+      ? ` (agents hit the ${TIMEOUT_AGENT_MS}ms timeout — raise it with GHCP_MAESTRO_TIMEOUT_MS for longer research runs)`
+      : "";
     return failRun(
       session,
       run,
-      `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed`,
+      `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed${hint}`,
     );
   }
 
@@ -835,7 +835,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const synthSpec = {
     id: "synth",
     agent: "synth",
-    timeoutMs: TIMEOUT_LONG_MS,
+    timeoutMs: TIMEOUT_AGENT_MS,
     prompt: [
       "You are a synthesis agent. Several independent subagents tackled different parts of a single task.",
       "Merge their outputs into a coherent final answer to the original task.",

@@ -11,7 +11,7 @@
 import { spawn } from "./spawn.mjs";
 import { newRunId } from "./run-store.mjs";
 import { createLlmMediatedAdapter } from "./adapters/llm-mediated.mjs";
-import { TIMEOUT_PROBE_MS, TIMEOUT_AGENT_MS } from "./timeouts.mjs";
+import { TIMEOUT_PROBE_MS } from "./timeouts.mjs";
 
 /**
  * Fire each trigger whose env var is set (non-empty after trim), passing the
@@ -137,7 +137,7 @@ export async function runPongProbe(session, prompt, adapter) {
   );
   const t0 = Date.now();
   const result = await spawn(
-    { prompt, agent: "pong", id: `${runId}-pong`, timeoutMs: TIMEOUT_AGENT_MS },
+    { prompt, agent: "pong", id: `${runId}-pong`, timeoutMs: TIMEOUT_PROBE_MS },
     { adapter },
   );
   const elapsed = Date.now() - t0;
