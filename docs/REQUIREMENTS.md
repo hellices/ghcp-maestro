@@ -64,7 +64,7 @@ Registered through extension `joinSession({ commands })`.
   - `/maestro brainstorm <topic>` — hardcoded 4 angles (tech/ux/biz/risk) → synth (for demo)
   - `/maestro hello` — fixed demo with 3 explore + 1 synth
   - `/maestro pong <prompt>` — single standalone-client spec probe
-  - `/maestro echo <prompt>` — single LLM-mediated probe (host-bound, limited)
+  - `GHCP_MAESTRO_PROBE_ECHO=<prompt>` (env trigger only, no `/maestro echo` subcommand) — single LLM-mediated probe (host-bound, limited)
 - `/maestros` — recent run list from RunStore
 - `/maestro-stop <id>`, `/maestro-resume <id>` — stop / resume based on RunStore
 - Saved workflows are dynamically registered in M5 (name collision policy TBD)

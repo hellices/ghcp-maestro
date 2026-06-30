@@ -11,9 +11,12 @@
 //     await log(`hello ${args.topic ?? "world"}`);
 //   }
 //
-// Scripts never touch the filesystem or shell directly — they only use the
-// injected `api` object (see buildWorkflowApi). This keeps third-party
-// workflows sandboxed to the runtime's vetted surface.
+// Scripts are expected to use only the injected `api` object (see
+// buildWorkflowApi) rather than touching the filesystem or shell directly.
+// This is a convention, not an enforced sandbox: loadSavedWorkflow uses a
+// dynamic import(), so a workflow module's top-level code can still reach Node
+// builtins. The trust boundary is the user's own machine — workflows are code
+// the user chose to install under their workflows dirs.
 
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
