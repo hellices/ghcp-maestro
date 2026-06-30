@@ -88,6 +88,25 @@ test("readProgress is undefined before any write", async () => {
   }
 });
 
+test("writeProgress serializes a fire-and-forget burst; the last-issued snapshot wins", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    // Issue a burst without awaiting the intermediate writes, mirroring the
+    // monitor's settle×N + flush sink. Awaiting only the last must drain the
+    // whole serialized chain in order, so progress.json ends on the last snapshot.
+    run.writeProgress({ done: 0, total: 3, updatedAt: 1 }).catch(() => {});
+    run.writeProgress({ done: 1, total: 3, updatedAt: 2 }).catch(() => {});
+    run.writeProgress({ done: 2, total: 3, updatedAt: 3 }).catch(() => {});
+    await run.writeProgress({ done: 3, total: 3, updatedAt: 4 });
+    const got = await run.readProgress();
+    assert.equal(got.done, 3);
+    assert.equal(got.updatedAt, 4);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 test("readRunProgress reads a run's progress by id", async () => {
   const baseDir = await freshBase();
   try {

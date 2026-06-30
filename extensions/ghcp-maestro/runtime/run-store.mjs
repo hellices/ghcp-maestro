@@ -143,6 +143,15 @@ function makeHandle(runDir, manifest) {
    * @property {number} finishedAt
    */
 
+  // Serializes progress.json writes for this run. The monitor's render sink
+  // fires writeProgress() fire-and-forget, so the terminal burst (settle×N then
+  // flush) issues several un-awaited writes to the same file. Atomic renames
+  // never corrupt it, but their completion order is not guaranteed — without
+  // this chain an earlier "1/3 done" snapshot could land after the final
+  // "3/3 done" flush and leave a permanently stale dashboard. Chaining makes
+  // issue order == completion order, so the last-issued snapshot always wins.
+  let progressWriteChain = Promise.resolve();
+
   return {
     runId: manifest.runId,
     runDir,
@@ -159,9 +168,16 @@ function makeHandle(runDir, manifest) {
       return readJson(join(runDir, "agents", `${agentId}.json`));
     },
 
-    /** Persist the live progress snapshot. Atomic, best-effort. */
-    async writeProgress(snapshot) {
-      await writeJsonAtomic(join(runDir, "progress.json"), snapshot);
+    /** Persist the live progress snapshot. Atomic, serialized, best-effort. */
+    writeProgress(snapshot) {
+      // Wait for the previous write to settle (ignoring its outcome so one
+      // failure can't break the chain), then write. The returned promise
+      // rejects only for *this* write, so the caller's own .catch still sees it.
+      const next = progressWriteChain
+        .catch(() => {})
+        .then(() => writeJsonAtomic(join(runDir, "progress.json"), snapshot));
+      progressWriteChain = next;
+      return next;
     },
 
     /** Read the last persisted progress snapshot, or undefined if none. */
