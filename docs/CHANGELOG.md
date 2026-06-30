@@ -6,6 +6,13 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-30
+
+First tagged release. Highlights since the initial scaffold: the M4 dynamic task
+workflow (plan → fan-out → synth), M5 saved workflows, M6 quality helpers, the
+M4.x plan pre-approval gate, background runs with on-demand `/maestros`
+monitoring, env-configurable agent timeouts, and CI. The runtime is zero-deps.
+
 ### Fixed
 - **`/maestros <runId>` now shows the plan and synth phases too.** Previously
   only the explore fan-out reported progress, so during the (often minute-plus)
