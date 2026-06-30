@@ -41,7 +41,7 @@
 끝난 에이전트는 캐시에서 가져오고, 누락되거나 실패한 것만 다시 돌린다.
 
 **백그라운드 실행과 모니터링.**
-`/maestro task|brainstorm|hello` 는 백그라운드로 시작돼, 에이전트가 fan-out 되는
+`/maestro task|brainstorm|hello|run` 는 백그라운드로 시작돼, 에이전트가 fan-out 되는
 동안 세션은 계속 자유롭다. `/maestros` 로 실행 목록과 진행 요약을, `/maestros
 <runId>` 로 에이전트별 상세 대시보드를 본다. `GHCP_MAESTRO_NO_MONITOR=1` 로 진행
 추적을 끌 수 있다.
@@ -99,9 +99,8 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 ```
 
 > ghcp-maestro 는 **orchestrator-workers** 패턴을 GitHub Copilot CLI 로 구현한
-> 것이다 — Claude Code 의 *dynamic workflows* 와 같은 아이디어: 분해 → 병렬
-> 에이전트 fan-out → 교차 검증 → 하나의 종합 답변, 그리고 run 을 영속화해 재실행
-> 가능.
+> 것이다 — 분해 → 병렬 에이전트 fan-out → 교차 검증 → 하나의 종합 답변, 그리고
+> run 을 영속화해 재실행 가능.
 
 ---
 

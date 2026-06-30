@@ -77,7 +77,7 @@ export async function spawn(spec, opts) {
             opts.onProgress({
               ...partial,
               agent: spec.agent ?? null,
-              specId: spec.id,
+              specId: id,
               ts: Date.now(),
             });
           } catch {

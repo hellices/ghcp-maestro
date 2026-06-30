@@ -34,7 +34,14 @@ test("normalizeChildEvent tolerates partial usage fields", () => {
 });
 
 test("normalizeChildEvent maps run-ish lifecycle events to running", () => {
-  for (const type of ["subagent.started", "assistant.turn_start", "tool.execution_complete"]) {
+  for (const type of [
+    "subagent.started",
+    "subagent.completed",
+    "subagent.failed",
+    "assistant.turn_start",
+    "tool.execution_progress",
+    "tool.execution_complete",
+  ]) {
     assert.deepEqual(normalizeChildEvent({ type }), { state: "running" });
   }
 });

@@ -137,7 +137,10 @@ export function createStandaloneClientAdapter(deps = {}) {
 export function normalizeChildEvent(event) {
   switch (event?.type) {
     case "subagent.started":
+    case "subagent.completed":
+    case "subagent.failed":
     case "assistant.turn_start":
+    case "tool.execution_progress":
     case "tool.execution_complete":
       return { state: "running" };
     case "assistant.streaming_delta":
