@@ -41,7 +41,7 @@
 끝난 에이전트는 캐시에서 가져오고, 누락되거나 실패한 것만 다시 돌린다.
 
 **백그라운드 실행과 모니터링.**
-`/maestro task|brainstorm|hello|run` 는 백그라운드로 시작돼, 에이전트가 fan-out 되는
+`/maestro task|brainstorm|run` 는 백그라운드로 시작돼, 에이전트가 fan-out 되는
 동안 세션은 계속 자유롭다. `/maestros` 로 실행 목록과 진행 요약을, `/maestros
 <runId>` 로 에이전트별 상세 대시보드를 본다. `GHCP_MAESTRO_NO_MONITOR=1` 로 진행
 추적을 끌 수 있다.
