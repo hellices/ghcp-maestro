@@ -12,6 +12,15 @@ export const MAX_AGENT_NAME_LEN = 60;
 export const MAX_PROMPT_LEN = 4_000;
 
 /**
+ * Max length of a *sanitized* agent id slug. Deliberately <= MAX_AGENT_NAME_LEN:
+ * `sanitizeAgentName` only feeds an id that is always prefixed with the subtask
+ * index (e.g. `explore-${i}-${sanitizeAgentName(name)}`), so the index keeps
+ * truncated-name collisions apart. Derived from one constant so the two limits
+ * never drift silently.
+ */
+export const MAX_AGENT_ID_LEN = 40;
+
+/**
  * Build the meta-prompt asked of the `plan` agent. When `parserError` is
  * supplied the prompt becomes a corrective retry that echoes the parser
  * feedback and the previous (rejected) reply.
@@ -141,5 +150,5 @@ export function parseAndValidatePlan(text) {
  * @returns {string}
  */
 export function sanitizeAgentName(name) {
-  return name.replace(/[^a-zA-Z0-9-]+/g, "-").slice(0, 40) || "agent";
+  return name.replace(/[^a-zA-Z0-9-]+/g, "-").slice(0, MAX_AGENT_ID_LEN) || "agent";
 }

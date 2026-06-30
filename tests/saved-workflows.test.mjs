@@ -159,6 +159,9 @@ test("parseWorkflowArgs handles json, plain text, and empty", () => {
   assert.deepEqual(parseWorkflowArgs("  "), {});
   // invalid JSON falls back to string
   assert.deepEqual(parseWorkflowArgs("{not json"), { input: "{not json" });
+  // arrays are not plain objects → treated as text, never returned as args
+  assert.deepEqual(parseWorkflowArgs("[1,2,3]"), { input: "[1,2,3]" });
+  assert.deepEqual(parseWorkflowArgs('{"a":[1,2]}'), { a: [1, 2] });
 });
 
 // ── bundled example ─────────────────────────────────────────────────────────

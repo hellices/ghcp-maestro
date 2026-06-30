@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   parseAndValidatePlan as parse,
   buildPlanPrompt,
+  sanitizeAgentName,
+  MAX_AGENT_ID_LEN,
 } from "../extensions/ghcp-maestro/runtime/plan.mjs";
 
 const VALID = JSON.stringify([
@@ -119,4 +121,23 @@ test("buildPlanPrompt appends parser feedback on retry", () => {
   assert.match(prompt, /could not be parsed/);
   assert.match(prompt, /JSON\.parse failed: x/);
   assert.match(prompt, /not json/);
+});
+
+test("sanitizeAgentName replaces disallowed characters with hyphens", () => {
+  assert.equal(sanitizeAgentName("hello world!"), "hello-world-");
+  assert.equal(sanitizeAgentName("a/b:c.d"), "a-b-c-d");
+  assert.equal(sanitizeAgentName("keeps-Allowed_09"), "keeps-Allowed-09");
+});
+
+test("sanitizeAgentName truncates to MAX_AGENT_ID_LEN", () => {
+  const out = sanitizeAgentName("a".repeat(100));
+  assert.equal(out.length, MAX_AGENT_ID_LEN);
+  assert.equal(out, "a".repeat(MAX_AGENT_ID_LEN));
+});
+
+test("sanitizeAgentName falls back to 'agent' for empty input", () => {
+  assert.equal(sanitizeAgentName(""), "agent");
+  // A run of disallowed chars collapses to a single hyphen (the id is always
+  // index-prefixed downstream, so this stays unique and filesystem-safe).
+  assert.equal(sanitizeAgentName("***"), "-");
 });

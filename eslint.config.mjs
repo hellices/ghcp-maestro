@@ -37,10 +37,25 @@ export default [
     },
   },
   {
-    // Runtime + extension code must not touch the console — JSON-RPC stdio.
+    // Runtime + extension code must not touch the console or stdio directly —
+    // the extension speaks JSON-RPC over stdout, so a stray write corrupts the
+    // protocol. Only session.log() is allowed.
     files: ["extensions/**/*.mjs"],
     rules: {
       "no-console": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.object.object.name='process'][callee.object.property.name='stdout'][callee.property.name='write']",
+          message: "Use session.log(); never write to stdout directly (JSON-RPC stdio).",
+        },
+        {
+          selector:
+            "CallExpression[callee.object.object.name='process'][callee.object.property.name='stderr'][callee.property.name='write']",
+          message: "Use session.log(); never write to stderr directly (JSON-RPC stdio).",
+        },
+      ],
     },
   },
   {

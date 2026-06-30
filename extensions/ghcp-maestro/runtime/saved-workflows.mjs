@@ -1,7 +1,8 @@
 // Saved workflows (M5) — discover, validate, and run user/project workflow
 // scripts so they can be invoked as slash commands.
 //
-// A saved workflow is an ESM module that default-exports an async function:
+// A saved workflow is an ESM module that default-exports a function (async, or
+// any function returning a Promise — it is always awaited by the runtime):
 //
 //   // my-workflow.mjs
 //   export const description = "One line shown in /maestro workflows";
@@ -96,8 +97,14 @@ export async function scanSavedWorkflows(dirs) {
     try {
       entries = await readdir(dir);
     } catch (err) {
-      if (err?.code === "ENOENT") continue;
-      throw err;
+      // ENOENT just means the directory doesn't exist. Any other error (e.g.
+      // permissions) must only skip THIS directory — never abort the scan, or a
+      // single unreadable project/user dir would also hide the bundled
+      // workflows and every lower-priority entry.
+      if (err?.code !== "ENOENT") {
+        skipped.push({ file: dir, reason: `unreadable directory: ${err?.message ?? err}` });
+      }
+      continue;
     }
     for (const entry of entries.sort()) {
       if (!entry.endsWith(".mjs")) continue;
@@ -140,7 +147,7 @@ export async function loadSavedWorkflow(file) {
       : null;
   if (!run) {
     throw new Error(
-      `workflow ${basename(file)} must default-export (or export 'run') an async function`,
+      `workflow ${basename(file)} must default-export (or export 'run') a function`,
     );
   }
   const description =
@@ -187,7 +194,7 @@ export function buildWorkflowApi(deps) {
     adapter,
     run,
     spawn: (spec) => spawn(spec, base),
-    spawnAll: (specs, extra) => spawnAll(specs, { ...base, ...extra }),
+    spawnAll: (specs, extra) => spawnAll(specs, { ...base, ...(extra || {}) }),
     async phase(name, fn) {
       await log(`phase=${name} start`);
       const t0 = Date.now();
@@ -203,10 +210,10 @@ export function buildWorkflowApi(deps) {
       }
     },
     adversarialReview: (findings, extra) =>
-      adversarialReview(findings, { ...base, ...extra }),
-    multiAngle: (task, extra) => multiAngle(task, { ...base, ...extra }),
-    fixLoop: (opts) => fixLoop({ ...base, ...opts }),
-    crossCheck: (claims, extra) => crossCheck(claims, { ...base, ...extra }),
+      adversarialReview(findings, { ...base, ...(extra || {}) }),
+    multiAngle: (task, extra) => multiAngle(task, { ...base, ...(extra || {}) }),
+    fixLoop: (opts) => fixLoop({ ...base, ...(opts || {}) }),
+    crossCheck: (claims, extra) => crossCheck(claims, { ...base, ...(extra || {}) }),
   };
 }
 
@@ -224,7 +231,10 @@ export function parseWorkflowArgs(raw) {
   if (trimmed.startsWith("{")) {
     try {
       const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object") return parsed;
+      // Defensive: only return plain objects so the documented object-only
+      // contract holds. `typeof [] === "object"` too, so exclude arrays even
+      // though a `{`-prefixed string can't currently parse into one.
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
     } catch {
       // fall through to treating it as a plain string
     }

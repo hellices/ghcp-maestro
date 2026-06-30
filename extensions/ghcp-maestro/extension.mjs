@@ -376,8 +376,9 @@ if (envRun && envRun.trim().length > 0) {
 const envResume = process.env.GHCP_MAESTRO_PROBE_RESUME;
 if (envResume && envResume.trim().length > 0) {
   (async () => {
+    let run;
     try {
-      const run = await openRun(envResume.trim());
+      run = await openRun(envResume.trim());
       const wf = resolveWorkflowHandler(run.manifest.workflow);
       if (!wf) {
         await session.log(
@@ -390,6 +391,9 @@ if (envResume && envResume.trim().length > 0) {
       await run.patchManifest({ status: "running" });
       await wf(session, run.manifest.args, { run });
     } catch (err) {
+      // The run was already flipped to "running"; ensure a failure transitions
+      // it to a terminal "error" rather than hanging forever in /maestros.
+      await run?.patchManifest({ status: "error" });
       await session.log(`ghcp-maestro: env resume probe failed: ${err?.message ?? err}`, {
         level: "error",
       });
@@ -686,6 +690,24 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
     );
   }
 
+  // spawnAll reports per-agent failure in-band (status !== "ok"). Surface those
+  // and refuse to persist a successful run when there is nothing to synthesise.
+  const failedExplore = results.filter((r) => r.status !== "ok");
+  if (failedExplore.length > 0) {
+    await session.log(
+      `ghcp-maestro/${runId}: ${failedExplore.length}/${results.length} explore agent(s) failed: ${failedExplore.map((r) => `${r.spec.agent}=${r.status}`).join(", ")}`,
+      { level: "warning" },
+    );
+  }
+  if (results.every((r) => r.status !== "ok")) {
+    await run.patchManifest({ status: "error" });
+    await session.log(
+      `ghcp-maestro/${runId}: brainstorm aborted — all ${results.length} explore agents failed`,
+      { level: "error" },
+    );
+    return run;
+  }
+
   // Phase 2 — synth
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
   const digest = results
@@ -714,6 +736,15 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   await session.log(
     `ghcp-maestro/${runId}: TOP 3 NEXT STEPS ↓\n${(synth.output?.text ?? "(empty)").trim()}`,
   );
+
+  if (synth.status !== "ok") {
+    await run.patchManifest({ status: "error" });
+    await session.log(
+      `ghcp-maestro/${runId}: brainstorm failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
+      { level: "error" },
+    );
+    return run;
+  }
 
   await run.complete();
   await session.log(
@@ -839,6 +870,24 @@ async function runTaskWorkflow(session, task, opts = {}) {
     );
   }
 
+  // spawnAll reports per-agent failure in-band. Surface failures and don't
+  // synthesise (or persist success) when every subtask failed.
+  const failedExplore = exploreResults.filter((r) => r.status !== "ok");
+  if (failedExplore.length > 0) {
+    await session.log(
+      `ghcp-maestro/${runId}: ${failedExplore.length}/${exploreResults.length} subtask agent(s) failed: ${failedExplore.map((r) => `${r.spec.agent}=${r.status}`).join(", ")}`,
+      { level: "warning" },
+    );
+  }
+  if (exploreResults.every((r) => r.status !== "ok")) {
+    await run.patchManifest({ status: "error" });
+    await session.log(
+      `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed`,
+      { level: "error" },
+    );
+    return run;
+  }
+
   // Phase 3 — synth: merge into a single answer to the original task.
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
   const digest = exploreResults
@@ -869,6 +918,15 @@ async function runTaskWorkflow(session, task, opts = {}) {
     `ghcp-maestro/${runId}: FINAL ANSWER ↓\n${(synth.output?.text ?? "(empty)").trim()}`,
   );
 
+  if (synth.status !== "ok") {
+    await run.patchManifest({ status: "error" });
+    await session.log(
+      `ghcp-maestro/${runId}: task failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
+      { level: "error" },
+    );
+    return run;
+  }
+
   await run.complete();
   await session.log(
     `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
@@ -890,7 +948,7 @@ async function listSavedWorkflows(session) {
   }
   await session.log(`ghcp-maestro: ${SAVED_WORKFLOWS.size} saved workflow(s):`);
   for (const wf of SAVED_WORKFLOWS.values()) {
-    let description = "(no description)";
+    let description;
     try {
       ({ description } = await loadSavedWorkflow(wf.file));
     } catch (err) {
@@ -934,10 +992,13 @@ async function runSavedWorkflowCommand(session, arg) {
 async function runSavedWorkflow(session, name, args, opts = {}) {
   const descriptor = SAVED_WORKFLOWS.get(name);
   if (!descriptor) {
+    // When invoked via resume, opts.run was already flipped to "running" by the
+    // caller; mark it error so it can't hang forever as a running run.
+    await opts.run?.patchManifest({ status: "error" });
     await session.log(`ghcp-maestro: saved workflow '${name}' is no longer available`, {
       level: "error",
     });
-    return;
+    return opts.run;
   }
   const run = opts.run ?? (await createRun({ workflow: `saved:${name}`, args }));
   const runId = run.runId;

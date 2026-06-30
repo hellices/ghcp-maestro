@@ -39,8 +39,8 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 - GitHub Actions: `ci.yml` (ESLint static analysis, `node --check` on every
   tracked `.mjs`, and the `node:test` suite across Node 20 and 22) and
   `codeql.yml` (CodeQL `security-and-quality` analysis).
-- 36 new unit tests (`tests/quality.test.mjs`, `tests/saved-workflows.test.mjs`,
-  plus `buildPlanPrompt` coverage) for a total of 59.
+- 43 new unit tests (`tests/quality.test.mjs`, `tests/saved-workflows.test.mjs`,
+  plus `buildPlanPrompt` / `sanitizeAgentName` coverage) for a total of 66.
 
 ### Changed
 - Extension load banner now reads `… (M6 release) …` and reports discovered
@@ -53,6 +53,31 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   `resolveWorkflowHandler`.
 - Line endings normalized to LF across the tree (per `.gitattributes`); the
   lockfile is now committed so CI can `npm ci` reproducibly.
+
+### Fixed
+- **Review hardening (CodeRabbit / CodeQL on PR #1).**
+  - `quality.mjs`: `adversarialReview` and `crossCheck` now group agent results
+    by an exact per-item spec-id set (folding in the item index) instead of a
+    string prefix, so findings/claims whose ids share a prefix (e.g. `a` and
+    `a-r1`) can no longer cross-contaminate scores; `crossCheck` maps each
+    verdict back to its source explicitly rather than by positional index.
+  - `quality.mjs`: `defaultSupportParser` checks negative phrasing first, so
+    `NOT SUPPORTED` / `UNSUPPORTED` / `SUPPORTED: NO` are no longer misread as
+    supported.
+  - `saved-workflows.mjs`: an unreadable (non-`ENOENT`) workflow directory is
+    now recorded as `skipped` and skipped instead of aborting the whole scan;
+    `parseWorkflowArgs` rejects JSON arrays so structured args are always plain
+    objects; `buildWorkflowApi` helper wrappers tolerate a missing `extra` arg.
+  - `extension.mjs`: failed resume and a missing saved-workflow descriptor now
+    transition the run to `error` instead of leaving it stuck as `running`;
+    `task`/`brainstorm` runs fail (status `error`) when every fan-out agent
+    fails or when `synth` fails, and log per-agent failures otherwise.
+  - `plan.mjs`: agent-id truncation length is now the named `MAX_AGENT_ID_LEN`
+    constant instead of a magic number.
+  - ESLint bans direct `process.stdout/stderr.write` in extension/runtime code
+    (only `session.log()` is JSON-RPC-safe); CI/CodeQL checkouts run with
+    `persist-credentials: false`; `plugin.json` declares its `extensions` entry
+    and `repository` metadata explicitly.
 
 ### M4 (previously unreleased)
 - **M4 — meta-prompt task workflow.** `/maestro task <natural-language task>`

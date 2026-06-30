@@ -80,6 +80,27 @@ test("adversarialReview requires an adapter", async () => {
   await assert.rejects(() => adversarialReview(["x"], {}), /adapter is required/);
 });
 
+test("adversarialReview never cross-contaminates prefix-sharing ids (a vs a-r1)", async () => {
+  // Reviewers for "alpha" all say VALID; reviewers for "beta" all say INVALID.
+  // Under the old startsWith() grouping, item "a" would also absorb the
+  // "a-r1" reviewer specs (review-a-r1-*) and lose its perfect score.
+  const adapter = scripted((spec) =>
+    spec.prompt.includes("Claim: alpha") ? "VERDICT: VALID" : "VERDICT: INVALID",
+  );
+  const { survivors, rejected, reviewed } = await adversarialReview(
+    [
+      { id: "a", text: "alpha" },
+      { id: "a-r1", text: "beta" },
+    ],
+    { adapter, reviewers: 3 },
+  );
+  const a = reviewed.find((r) => r.id === "a");
+  assert.equal(a.votes.length, 3); // exactly its own reviewers, not 6
+  assert.equal(a.score, 1);
+  assert.deepEqual(survivors.map((s) => s.id), ["a"]);
+  assert.deepEqual(rejected.map((s) => s.id), ["a-r1"]);
+});
+
 // ── multiAngle ─────────────────────────────────────────────────────────────
 
 test("multiAngle drafts each angle then applies the judge's choice", async () => {
@@ -199,4 +220,46 @@ test("crossCheck returns empty for empty claims", async () => {
   const adapter = scripted(() => "SUPPORTED: YES");
   const res = await crossCheck([], { adapter });
   assert.deepEqual(res, { checked: [] });
+});
+
+test("crossCheck reads NOT SUPPORTED / SUPPORTED: NO / UNSUPPORTED as unsupported", async () => {
+  for (const reply of ["NOT SUPPORTED", "SUPPORTED: NO", "Unsupported, sorry"]) {
+    const adapter = scripted(() => reply);
+    const { checked } = await crossCheck(["claim"], { adapter, sources: ["a", "b"] });
+    assert.equal(checked[0].supportRate, 0, `reply=${reply}`);
+    assert.equal(
+      checked[0].verdicts.every((v) => v.supported === false),
+      true,
+      `reply=${reply}`,
+    );
+  }
+});
+
+test("crossCheck still reads YES / bare SUPPORTED as supported", async () => {
+  for (const reply of ["SUPPORTED: YES", "SUPPORTED"]) {
+    const adapter = scripted(() => reply);
+    const { checked } = await crossCheck(["claim"], { adapter, sources: ["a", "b"] });
+    assert.equal(checked[0].supportRate, 1, `reply=${reply}`);
+  }
+});
+
+test("crossCheck never cross-contaminates prefix-sharing ids", async () => {
+  // "alpha" supported by all sources; "beta" by none. Old prefix grouping would
+  // let item "c" absorb item "c-x" results and dilute its support rate.
+  const adapter = scripted((spec) =>
+    spec.prompt.includes("Claim: alpha") ? "SUPPORTED: YES" : "SUPPORTED: NO",
+  );
+  const { checked } = await crossCheck(
+    [
+      { id: "c", text: "alpha" },
+      { id: "c-x", text: "beta" },
+    ],
+    { adapter, sources: ["s1", "s2"] },
+  );
+  const c = checked.find((x) => x.id === "c");
+  const cx = checked.find((x) => x.id === "c-x");
+  assert.equal(c.verdicts.length, 2); // only its own two sources
+  assert.equal(c.supportRate, 1);
+  assert.equal(cx.supportRate, 0);
+  assert.deepEqual(c.verdicts.map((v) => v.source), ["s1", "s2"]);
 });

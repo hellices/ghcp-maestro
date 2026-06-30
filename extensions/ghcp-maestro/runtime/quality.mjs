@@ -55,21 +55,28 @@ export async function adversarialReview(findings, opts) {
   const spawnAll = opts.spawnAll ?? defaultSpawnAll;
 
   const items = findings.map((f, i) => normalizeFinding(f, i));
+  // Track the exact spec ids each item owns (keyed by position) so results are
+  // never regrouped by string prefix — `a` and `a-r1` would otherwise collide.
+  // The item index is also folded into the spec id to keep it globally unique
+  // even when two findings normalize to the same slug.
   const specs = [];
-  for (const item of items) {
+  const ownSpecIds = items.map(() => new Set());
+  items.forEach((item, itemIdx) => {
     for (let r = 0; r < reviewers; r += 1) {
+      const specId = `review-${item.index}-${item.id}-r${r}`;
       specs.push({
-        id: `review-${item.id}-r${r}`,
-        agent: `review-${item.id}-r${r}`,
+        id: specId,
+        agent: specId,
         prompt: buildPrompt(item.text, r, item.index),
       });
+      ownSpecIds[itemIdx].add(specId);
     }
-  }
+  });
 
   const results = await spawnAll(specs, forwardOpts(opts));
 
-  const reviewed = items.map((item) => {
-    const own = results.filter((res) => res.spec.id.startsWith(`review-${item.id}-r`));
+  const reviewed = items.map((item, itemIdx) => {
+    const own = results.filter((res) => ownSpecIds[itemIdx].has(res.spec.id));
     const votes = own.map((res) => {
       if (res.status !== "ok") return { valid: false, reason: `reviewer ${res.status}` };
       return parseVerdict(textOf(res));
@@ -298,23 +305,31 @@ export async function crossCheck(claims, opts) {
   const spawnAll = opts.spawnAll ?? defaultSpawnAll;
 
   const items = claims.map((c, i) => normalizeFinding(c, i));
+  // As in adversarialReview: own results by exact spec id (not prefix) and map
+  // each result back to its source explicitly, so prefix-sharing or duplicate
+  // claim ids can't cross-contaminate support rates or mislabel sources.
   const specs = [];
-  for (const item of items) {
+  const ownSpecIds = items.map(() => new Set());
+  const sourceBySpecId = new Map();
+  items.forEach((item, itemIdx) => {
     for (const source of sources) {
+      const specId = `check-${item.index}-${item.id}-${slug(source)}`;
       specs.push({
-        id: `check-${item.id}-${slug(source)}`,
-        agent: `check-${item.id}-${slug(source)}`,
+        id: specId,
+        agent: specId,
         prompt: buildPrompt(item.text, source),
       });
+      ownSpecIds[itemIdx].add(specId);
+      sourceBySpecId.set(specId, source);
     }
-  }
+  });
 
   const results = await spawnAll(specs, forwardOpts(opts));
 
-  const checked = items.map((item) => {
-    const own = results.filter((res) => res.spec.id.startsWith(`check-${item.id}-`));
-    const verdicts = own.map((res, idx) => {
-      const source = sources[idx];
+  const checked = items.map((item, itemIdx) => {
+    const own = results.filter((res) => ownSpecIds[itemIdx].has(res.spec.id));
+    const verdicts = own.map((res) => {
+      const source = sourceBySpecId.get(res.spec.id);
       if (res.status !== "ok") return { source, supported: null };
       return { source, ...parseVerdict(textOf(res)) };
     });
@@ -339,11 +354,13 @@ function defaultCrossCheckPrompt(claim, source) {
 
 function defaultSupportParser(text) {
   const t = String(text).toUpperCase();
-  if (/SUPPORTED:\s*YES|\bSUPPORTED\b/.test(t) && !/SUPPORTED:\s*NO/.test(t)) {
-    return { supported: true };
-  }
-  if (/SUPPORTED:\s*NO|\bNOT SUPPORTED\b|\bUNSUPPORTED\b/.test(t)) {
+  // Check negative phrasing first so "NOT SUPPORTED" / "UNSUPPORTED" / "SUPPORTED: NO"
+  // are never swallowed by the bare positive token below.
+  if (/SUPPORTED:\s*NO|\bNOT\s+SUPPORTED\b|\bUNSUPPORTED\b/.test(t)) {
     return { supported: false };
+  }
+  if (/SUPPORTED:\s*YES|\bSUPPORTED\b/.test(t)) {
+    return { supported: true };
   }
   return { supported: null };
 }
