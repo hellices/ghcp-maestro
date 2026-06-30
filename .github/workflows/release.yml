@@ -1,0 +1,111 @@
+name: Release
+
+# Tag-triggered release. Pushing a vX.Y.Z tag re-runs the gate, verifies the tag
+# matches every version field + the changelog + a lean archive, then publishes
+# the GitHub Release from the changelog notes. See docs/RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Verify and publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # only this job needs write, to create the Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Lint and test
+        run: npm run check
+
+      - name: Verify tag matches every version field
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          echo "Tag version: $tag"
+          fail=0
+          for f in plugin.json package.json extensions/ghcp-maestro/package.json; do
+            v=$(node -p "require('./$f').version")
+            if [ "$v" != "$tag" ]; then
+              echo "::error file=$f::version ($v) != tag ($tag)"
+              fail=1
+            fi
+          done
+          mv=$(node -p "require('./.github/plugin/marketplace.json').metadata.version")
+          pv=$(node -p "require('./.github/plugin/marketplace.json').plugins[0].version")
+          if [ "$mv" != "$tag" ] || [ "$pv" != "$tag" ]; then
+            echo "::error file=.github/plugin/marketplace.json::version ($mv / $pv) != tag ($tag)"
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "All version fields == $tag"
+          exit $fail
+
+      - name: Verify changelog has this version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if ! grep -qF "## [$tag]" docs/CHANGELOG.md; then
+            echo "::error file=docs/CHANGELOG.md::no '## [$tag]' section"
+            exit 1
+          fi
+          echo "Changelog has a [$tag] section"
+
+      - name: Verify release archive excludes dev-only files
+        run: |
+          list=$(git archive --format=tar HEAD | tar -t)
+          echo "$list"
+          fail=0
+          for bad in "tests/" "docs/specs/" "docs/PLAN.md" "docs/REQUIREMENTS.md" "docs/RELEASING.md" "eslint.config.mjs" ".github/workflows/" "AGENTS.md" "package-lock.json"; do
+            if echo "$list" | grep -qF "$bad"; then
+              echo "::error::release archive leaks dev-only path: $bad"
+              fail=1
+            fi
+          done
+          for need in "plugin.json" "extensions/ghcp-maestro/extension.mjs" ".github/plugin/marketplace.json" "LICENSE"; do
+            if ! echo "$list" | grep -qF "$need"; then
+              echo "::error::release archive is missing required path: $need"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "Archive is lean and complete."
+          exit $fail
+
+      - name: Extract release notes from changelog
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # Match headings by exact string, not regex (SemVer dots would be
+          # wildcards). Start at "## [<tag>]", stop at the next "## [" heading.
+          awk -v want="## [$tag]" '
+            index($0, want) == 1 { f = 1; next }
+            index($0, "## [") == 1 { f = 0 }
+            f
+          ' docs/CHANGELOG.md > RELEASE_NOTES.md
+          echo "----- release notes -----"
+          cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag
