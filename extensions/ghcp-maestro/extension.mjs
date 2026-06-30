@@ -4,9 +4,9 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 import { spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
-import { createMonitor } from "./runtime/monitor.mjs";
+import { createMonitor, renderDashboard, renderSummary } from "./runtime/monitor.mjs";
 import { isTruthyEnv, monitorEnabled } from "./runtime/env-flags.mjs";
-import { createRun, openRun, listRuns, defaultBaseDir } from "./runtime/run-store.mjs";
+import { createRun, openRun, listRuns, readRunProgress, defaultBaseDir } from "./runtime/run-store.mjs";
 import {
   buildPlanPrompt,
   parseAndValidatePlan,
@@ -125,18 +125,21 @@ const MAESTRO_SUBCOMMANDS = [
   {
     name: "task",
     needsArg: "task description",
+    background: true,
     summary: "Decompose a natural-language task into 3-6 subtasks → run each in an isolated child Copilot session in parallel → synth cross-checks them into a final answer.",
     run: (arg) => runTaskWorkflow(session, arg),
   },
   {
     name: "brainstorm",
     needsArg: "topic",
+    background: true,
     summary: "Fixed 4-lens demo (tech/ux/biz/risk). Each lens runs in an isolated child session in parallel, then synth derives the TOP 3 actions.",
     run: (arg) => runBrainstormWorkflow(session, arg),
   },
   {
     name: "hello",
     needsArg: false,
+    background: true,
     summary: "M2.6 demo — fixed 3 explore + 1 synth script, all isolated child sessions.",
     run: () => runHelloWorkflow(session),
   },
@@ -149,6 +152,7 @@ const MAESTRO_SUBCOMMANDS = [
   {
     name: "run",
     needsArg: "name [args]",
+    background: true,
     summary: "Run a saved workflow (M5). e.g. /maestro run deep-review {\"topic\":\"...\"} — args are JSON or plain text (=> {input}).",
     run: (arg) => runSavedWorkflowCommand(session, arg),
   },
@@ -175,7 +179,7 @@ async function maestroHelp() {
   }
   lines.push("");
   lines.push("Run management:");
-  lines.push("  /maestros                     list recent runs (newest first)");
+  lines.push("  /maestros [runId]             list recent runs, or show one run's live dashboard");
   lines.push("  /maestro-resume <runId>       replay a run; cached agents reused, missing ones rerun");
   lines.push("  /maestro-stop <runId>         mark a run as stopped");
   if (SAVED_WORKFLOWS.size > 0) {
@@ -224,13 +228,45 @@ const session = await joinSession({
           );
           return;
         }
+        if (sc.background) {
+          // Fire-and-forget: return at once so the session stays free while the
+          // run fans out. The runner logs the runId and persists progress; watch
+          // it with /maestros. A detached rejection is logged, never unhandled.
+          Promise.resolve()
+            .then(() => sc.run(tail))
+            .catch((err) =>
+              session.log(`ghcp-maestro: ${sc.name} failed: ${err?.message ?? err}`, {
+                level: "error",
+              }),
+            );
+          return;
+        }
         await sc.run(tail);
       },
     },
     {
       name: "maestros",
-      description: "List recent ghcp-maestro workflow runs.",
-      handler: async () => {
+      description: "List recent ghcp-maestro workflow runs, or show one run's live dashboard.",
+      handler: async (ctx) => {
+        const arg = (ctx?.args ?? "").trim();
+        if (arg) {
+          let snap;
+          try {
+            snap = await readRunProgress(arg);
+          } catch (err) {
+            await session.log(
+              `ghcp-maestro: cannot read progress for '${arg}': ${err?.message ?? err}`,
+              { level: "error" },
+            );
+            return;
+          }
+          if (!snap) {
+            await session.log(`ghcp-maestro: no progress recorded for run '${arg}' (yet)`);
+            return;
+          }
+          await session.log(renderDashboard(snap));
+          return;
+        }
         const runs = await listRuns({ limit: 20 });
         if (runs.length === 0) {
           await session.log(`ghcp-maestro: no runs yet under ${defaultBaseDir()}`);
@@ -242,7 +278,12 @@ const session = await joinSession({
           await session.log(
             `  ${m.runId}  workflow=${m.workflow}  status=${m.status}  started=${new Date(m.startedAt).toISOString()}${argsPreview ? `  args=${argsPreview}` : ""}`,
           );
+          if (m.status === "running") {
+            const snap = await readRunProgress(m.runId).catch(() => undefined);
+            if (snap) await session.log(`      ${renderSummary(snap)}`);
+          }
         }
+        await session.log("ghcp-maestro: open a run's live dashboard with /maestros <runId>");
       },
     },
     {
@@ -415,6 +456,9 @@ async function runHelloWorkflow(session, opts = {}) {
   await session.log(
     `ghcp-maestro/${runId}: starting hello workflow (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
   );
+  if (!opts.run) {
+    await session.log(`ghcp-maestro/${runId}: running in background — watch with /maestros ${runId}`);
+  }
 
   // Phase 1 — explore (fan-out)
   await session.log(`ghcp-maestro/${runId}: phase=explore agents=3 (parallel)`);
@@ -444,7 +488,9 @@ async function runHelloWorkflow(session, opts = {}) {
   const monitor = monitorEnabled(process.env)
     ? createMonitor({
         label: `ghcp-maestro/${runId} explore`,
-        render: (text) => session.log(text, { ephemeral: true }),
+        render: (_text, snap) => {
+          run.writeProgress(snap).catch(() => {});
+        },
       })
     : null;
   monitor?.seed(exploreSpecs.map((s) => ({ id: s.id, agent: s.agent })));
@@ -513,6 +559,9 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   await session.log(
     `ghcp-maestro/${runId}: brainstorm "${topic.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
   );
+  if (!opts.run) {
+    await session.log(`ghcp-maestro/${runId}: running in background — watch with /maestros ${runId}`);
+  }
 
   const angles = [
     {
@@ -560,7 +609,9 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   const monitor = monitorEnabled(process.env)
     ? createMonitor({
         label: `ghcp-maestro/${runId} explore`,
-        render: (text) => session.log(text, { ephemeral: true }),
+        render: (_text, snap) => {
+          run.writeProgress(snap).catch(() => {});
+        },
       })
     : null;
   monitor?.seed(specs.map((s) => ({ id: s.id, agent: s.agent })));
@@ -652,6 +703,9 @@ async function runTaskWorkflow(session, task, opts = {}) {
   await session.log(
     `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
   );
+  if (!opts.run) {
+    await session.log(`ghcp-maestro/${runId}: running in background — watch with /maestros ${runId}`);
+  }
 
   // Phase 1 — plan: ask the LLM to decompose the task.
   await session.log(`ghcp-maestro/${runId}: phase=plan agents=1`);
@@ -755,7 +809,9 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const monitor = monitorEnabled(process.env)
     ? createMonitor({
         label: `ghcp-maestro/${runId} explore`,
-        render: (text) => session.log(text, { ephemeral: true }),
+        render: (_text, snap) => {
+          run.writeProgress(snap).catch(() => {});
+        },
       })
     : null;
   monitor?.seed(exploreSpecs.map((s) => ({ id: s.id, agent: s.agent })));
