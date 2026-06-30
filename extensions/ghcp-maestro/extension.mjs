@@ -5,7 +5,7 @@ import { joinSession } from "@github/copilot-sdk/extension";
 import { spawn, spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createLlmMediatedAdapter } from "./runtime/adapters/llm-mediated.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
-import { createRun, openRun, listRuns, defaultBaseDir } from "./runtime/run-store.mjs";
+import { createRun, openRun, listRuns, defaultBaseDir, newRunId } from "./runtime/run-store.mjs";
 import {
   buildPlanPrompt,
   parseAndValidatePlan,
@@ -500,10 +500,6 @@ async function runHelloWorkflow(session, opts = {}) {
     `ghcp-maestro/${runId}: hello workflow complete (${exploreResults.length + 1} agents across 2 phases)`,
   );
   return run;
-}
-
-function newRunId() {
-  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // --- Echo probe (LLM-mediated adapter, M2.5) --------------------------------
