@@ -69,6 +69,15 @@ test("writeJsonAtomic does not leave a partial file on success", async () => {
   }
 });
 
+test("openRun rejects unsafe runIds (path traversal)", async () => {
+  for (const bad of ["../escape", "..", "a/b", "a\\b", "", "x\0y"]) {
+    await assert.rejects(
+      () => openRun(bad, { baseDir: "/tmp/ghcp-maestro-nonexistent" }),
+      /unsafe runId|non-empty string/,
+    );
+  }
+});
+
 test("spawn with runHandle persists and reuses cached results", async () => {
   const baseDir = await freshBase();
   try {
