@@ -21,6 +21,7 @@ import {
   runEchoProbe,
   runAgentRegistrySpawnProbe,
   runPongProbe,
+  dispatchEnvTriggers,
 } from "./runtime/probes.mjs";
 import {
   exploreResultLine,
@@ -328,101 +329,76 @@ for (const s of SAVED_WORKFLOWS_SKIPPED) {
   });
 }
 
-// --- Probe trigger (M2.5/M2.6 measurement) ---------------------------------
+// --- Probe / workflow env triggers (M2.5/M2.6 measurement) ------------------
 //
-// Env-triggered probes for non-interactive validation:
-//   GHCP_MAESTRO_PROBE_ECHO=<text>      → LLM-mediated adapter on the current session
-//   GHCP_MAESTRO_PROBE_REGSPAWN=<text>  → session.rpc.agentRegistry.spawn() probe (B)
-//   GHCP_MAESTRO_PROBE_PONG=<text>      → standalone CopilotClient adapter probe (C)
-//   GHCP_MAESTRO_PROBE_HELLO=1          → run the full /maestro hello workflow
+// Env-triggered entry points for non-interactive validation. Fired fire-and-
+// forget (not awaited at the top level) so joinSession() can return and the host
+// marks the extension "ready" before we issue any session RPC.
+//
+//   GHCP_MAESTRO_PROBE_ECHO=<text>        → LLM-mediated adapter on the current session
+//   GHCP_MAESTRO_PROBE_REGSPAWN=<text>    → session.rpc.agentRegistry.spawn() probe (B)
+//   GHCP_MAESTRO_PROBE_PONG=<text>        → standalone CopilotClient adapter probe (C)
+//   GHCP_MAESTRO_PROBE_HELLO=1            → run the full /maestro hello workflow
 //   GHCP_MAESTRO_PROBE_BRAINSTORM=<topic> → run the brainstorm workflow
-//   GHCP_MAESTRO_PROBE_TASK=<task>      → run the M4 dynamic task workflow
-//   GHCP_MAESTRO_PROBE_RESUME=<runId>   → resume the named run (M3)
-//
-// Not awaited at the top level — let joinSession() return first so the host
-// considers the extension "ready" before we issue any session RPC.
-const envEcho = process.env.GHCP_MAESTRO_PROBE_ECHO;
-if (envEcho && envEcho.trim().length > 0) {
-  runEchoProbe(session, envEcho.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env echo probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envRegSpawn = process.env.GHCP_MAESTRO_PROBE_REGSPAWN;
-if (envRegSpawn && envRegSpawn.trim().length > 0) {
-  runAgentRegistrySpawnProbe(session, envRegSpawn.trim()).catch(async (err) => {
-    await session.log(
-      `ghcp-maestro: env agentRegistry probe failed: ${err?.message ?? err}`,
-      { level: "error" },
-    );
-  });
-}
-const envPong = process.env.GHCP_MAESTRO_PROBE_PONG;
-if (envPong && envPong.trim().length > 0) {
-  runPongProbe(session, envPong.trim(), getStandaloneAdapter()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env pong probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envHello = process.env.GHCP_MAESTRO_PROBE_HELLO;
-if (envHello && envHello.trim().length > 0) {
-  runHelloWorkflow(session).catch(async (err) => {
-    await session.log(`ghcp-maestro: env hello probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envBrainstorm = process.env.GHCP_MAESTRO_PROBE_BRAINSTORM;
-if (envBrainstorm && envBrainstorm.trim().length > 0) {
-  runBrainstormWorkflow(session, envBrainstorm.trim()).catch(async (err) => {
-    await session.log(
-      `ghcp-maestro: env brainstorm probe failed: ${err?.message ?? err}`,
-      { level: "error" },
-    );
-  });
-}
-const envTask = process.env.GHCP_MAESTRO_PROBE_TASK;
-if (envTask && envTask.trim().length > 0) {
-  runTaskWorkflow(session, envTask.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env task probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envRun = process.env.GHCP_MAESTRO_PROBE_RUN;
-if (envRun && envRun.trim().length > 0) {
-  runSavedWorkflowCommand(session, envRun.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env run probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envResume = process.env.GHCP_MAESTRO_PROBE_RESUME;
-if (envResume && envResume.trim().length > 0) {
-  (async () => {
-    let run;
-    try {
-      run = await openRun(envResume.trim());
-      const wf = resolveWorkflowHandler(run.manifest.workflow);
-      if (!wf) {
-        await session.log(
-          `ghcp-maestro: env resume failed — workflow '${run.manifest.workflow}' not registered`,
-          { level: "error" },
-        );
-        return;
-      }
-      await session.log(`ghcp-maestro: env resume ${run.runId} workflow=${run.manifest.workflow}`);
-      await run.patchManifest({ status: "running" });
-      await wf(session, run.manifest.args, { run });
-    } catch (err) {
-      // The run was already flipped to "running"; ensure a failure transitions
-      // it to a terminal "error" rather than hanging forever in /maestros.
-      await failRun(session, run, `ghcp-maestro: env resume probe failed: ${err?.message ?? err}`);
+//   GHCP_MAESTRO_PROBE_TASK=<task>        → run the M4 dynamic task workflow
+//   GHCP_MAESTRO_PROBE_RUN=<name [args]>  → run a saved workflow
+//   GHCP_MAESTRO_PROBE_RESUME=<runId>     → resume the named run (M3)
+
+/**
+ * Resume a run named by the env probe. Unlike the interactive /maestro-resume
+ * handler (which reports openRun / not-registered / run failures separately), the
+ * probe path funnels every failure into one failRun so a half-started run can't
+ * hang in "running". Never throws — the dispatcher's catch is a safety net only.
+ */
+async function resumeRunFromEnv(session, runId) {
+  let run;
+  try {
+    run = await openRun(runId);
+    const wf = resolveWorkflowHandler(run.manifest.workflow);
+    if (!wf) {
+      await session.log(
+        `ghcp-maestro: env resume failed — workflow '${run.manifest.workflow}' not registered`,
+        { level: "error" },
+      );
+      return;
     }
-  })();
+    await session.log(`ghcp-maestro: env resume ${run.runId} workflow=${run.manifest.workflow}`);
+    await run.patchManifest({ status: "running" });
+    await wf(session, run.manifest.args, { run });
+  } catch (err) {
+    await failRun(session, run, `ghcp-maestro: env resume probe failed: ${err?.message ?? err}`);
+  }
 }
+
+dispatchEnvTriggers(
+  process.env,
+  [
+    { env: "GHCP_MAESTRO_PROBE_ECHO", label: "echo probe", run: (v) => runEchoProbe(session, v) },
+    {
+      env: "GHCP_MAESTRO_PROBE_REGSPAWN",
+      label: "agentRegistry probe",
+      run: (v) => runAgentRegistrySpawnProbe(session, v),
+    },
+    {
+      env: "GHCP_MAESTRO_PROBE_PONG",
+      label: "pong probe",
+      run: (v) => runPongProbe(session, v, getStandaloneAdapter()),
+    },
+    { env: "GHCP_MAESTRO_PROBE_HELLO", label: "hello probe", run: () => runHelloWorkflow(session) },
+    {
+      env: "GHCP_MAESTRO_PROBE_BRAINSTORM",
+      label: "brainstorm probe",
+      run: (v) => runBrainstormWorkflow(session, v),
+    },
+    { env: "GHCP_MAESTRO_PROBE_TASK", label: "task probe", run: (v) => runTaskWorkflow(session, v) },
+    { env: "GHCP_MAESTRO_PROBE_RUN", label: "run probe", run: (v) => runSavedWorkflowCommand(session, v) },
+    { env: "GHCP_MAESTRO_PROBE_RESUME", label: "resume probe", run: (v) => resumeRunFromEnv(session, v) },
+  ],
+  {
+    onError: (label, err) =>
+      session.log(`ghcp-maestro: env ${label} failed: ${err?.message ?? err}`, { level: "error" }),
+  },
+);
 
 // --- Hello workflow (standalone adapter, M2.6) ------------------------------
 

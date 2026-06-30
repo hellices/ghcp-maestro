@@ -14,6 +14,27 @@ import { createLlmMediatedAdapter } from "./adapters/llm-mediated.mjs";
 import { TIMEOUT_PROBE_MS, TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 
 /**
+ * Fire each trigger whose env var is set (non-empty after trim), passing the
+ * trimmed value to its handler. Handlers run fire-and-forget — the extension
+ * must let joinSession() return before issuing session RPC — so a rejection is
+ * routed to onError(label, err) instead of becoming an unhandled rejection.
+ * Pure and host-agnostic so the dispatch logic is unit-testable.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @param {Array<{ env: string, label: string, run: (value: string) => unknown }>} triggers
+ * @param {{ onError?: (label: string, err: unknown) => void }} [opts]
+ */
+export function dispatchEnvTriggers(env, triggers, { onError } = {}) {
+  for (const trigger of triggers) {
+    const raw = env[trigger.env];
+    if (!raw || raw.trim().length === 0) continue;
+    Promise.resolve()
+      .then(() => trigger.run(raw.trim()))
+      .catch((err) => onError?.(trigger.label, err));
+  }
+}
+
+/**
  * Single-spec probe measuring the end-to-end LLM-mediated round-trip on the
  * current host session (Can a handler call session.sendAndWait? Does a reply
  * come back inside the handler?). Creates its own llm-mediated adapter.
