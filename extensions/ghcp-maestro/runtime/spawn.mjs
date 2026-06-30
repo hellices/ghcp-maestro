@@ -30,7 +30,7 @@ import { runWithConcurrency } from "./concurrency.mjs";
  *
  * @typedef {Object} SubagentAdapter
  * @property {string} name
- * @property {(spec: AgentSpec, ctx: { signal?: AbortSignal }) => Promise<unknown>} invoke
+ * @property {(spec: AgentSpec, ctx: { signal?: AbortSignal, onProgress?: (partial: object) => void }) => Promise<unknown>} invoke
  */
 
 /** Global cap defined by REQUIREMENTS §4.4. Enforced per spawnAll call. */
@@ -48,7 +48,7 @@ export const DEFAULT_CONCURRENCY = 16;
  * adapter is NOT invoked — this is what makes a run resumable.
  *
  * @param {AgentSpec} spec
- * @param {{ adapter: SubagentAdapter, signal?: AbortSignal, runHandle?: { readAgent: Function, writeAgent: Function } }} opts
+ * @param {{ adapter: SubagentAdapter, signal?: AbortSignal, runHandle?: { readAgent: Function, writeAgent: Function }, onProgress?: (evt: object) => void }} opts
  * @returns {Promise<AgentResult>}
  */
 export async function spawn(spec, opts) {
@@ -71,7 +71,21 @@ export async function spawn(spec, opts) {
 
   let result;
   try {
-    const output = await adapter.invoke(spec, { signal: timeoutCtx.signal });
+    const onProgress = opts.onProgress
+      ? (partial) => {
+          try {
+            opts.onProgress({
+              ...partial,
+              agent: spec.agent ?? null,
+              specId: spec.id,
+              ts: Date.now(),
+            });
+          } catch {
+            // monitoring is best-effort: never let it break the spawn
+          }
+        }
+      : undefined;
+    const output = await adapter.invoke(spec, { signal: timeoutCtx.signal, onProgress });
     result = {
       id,
       spec,
@@ -118,6 +132,7 @@ export async function spawn(spec, opts) {
  *   concurrency?: number,
  *   signal?: AbortSignal,
  *   runHandle?: { readAgent: Function, writeAgent: Function },
+ *   onProgress?: (evt: object) => void,
  * }} opts
  * @returns {Promise<AgentResult[]>}
  */
@@ -135,6 +150,7 @@ export async function spawnAll(specs, opts) {
         adapter: opts.adapter,
         signal: opts.signal,
         runHandle: opts.runHandle,
+        onProgress: opts.onProgress,
       }),
   );
   return runWithConcurrency(tasks, { concurrency, signal: opts?.signal });
