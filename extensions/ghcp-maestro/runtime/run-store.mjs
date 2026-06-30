@@ -14,10 +14,10 @@
 // return undefined; corrupt JSON throws.
 
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
-import { randomBytes } from "node:crypto";
+import { join, dirname, basename } from "node:path";
 import {
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -186,13 +186,22 @@ function makeHandle(runDir, manifest) {
 // --- IO helpers --------------------------------------------------------------
 
 export async function writeJsonAtomic(filePath, value) {
-  await mkdir(dirname(filePath), { recursive: true });
-  // Cryptographically-random suffix so the temp name is unpredictable, and the
-  // "wx" (O_CREAT|O_EXCL) flag refuses to follow a pre-existing path — together
-  // these close the symlink/predictable-temp race a plain Math.random() name has.
-  const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(tmp, JSON.stringify(value, null, 2), { encoding: "utf8", flag: "wx" });
-  await rename(tmp, filePath);
+  const dir = dirname(filePath);
+  await mkdir(dir, { recursive: true });
+  // Write into an OS-created unique temp directory (mkdtemp is atomic and uses
+  // secure randomness), then atomically rename into place. This avoids any
+  // predictable / hand-rolled temp filename and the symlink race that comes with
+  // it. The temp dir is a sibling of the target so the rename stays on one
+  // filesystem; its ".tmp-" name is never picked up by the run/agent scans
+  // (listRuns reads one level up; listAgents filters for ".json").
+  const tmpDir = await mkdtemp(join(dir, ".tmp-"));
+  const tmp = join(tmpDir, basename(filePath));
+  try {
+    await writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
+    await rename(tmp, filePath);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 export async function readJson(filePath) {
