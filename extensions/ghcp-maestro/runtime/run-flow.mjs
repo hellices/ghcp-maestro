@@ -9,6 +9,8 @@
  * a caller can `return failRun(...)`. Centralises the abort boilerplate every
  * workflow failure branch repeats. The run handle is optional-chained so the
  * resume/probe paths (where the run may be undefined) can share this helper.
+ * The manifest patch is best-effort: if it rejects (e.g. a disk IO error) the
+ * error message is still logged.
  *
  * @param {{ log: (msg: string, opts?: { level?: string }) => unknown | Promise<unknown> }} session
  * @param {{ patchManifest?: (patch: object) => unknown | Promise<unknown> } | undefined} run
@@ -16,7 +18,13 @@
  * @returns {Promise<object | undefined>} the same run handle that was passed in
  */
 export async function failRun(session, run, message) {
-  await run?.patchManifest?.({ status: "error" });
+  // Persisting the terminal status is best-effort: an IO failure here must never
+  // swallow the user-facing error log below (that log is the whole point).
+  try {
+    await run?.patchManifest?.({ status: "error" });
+  } catch {
+    // ignore — fall through to log the original failure
+  }
   await session.log(message, { level: "error" });
   return run;
 }

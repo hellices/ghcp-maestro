@@ -48,3 +48,17 @@ test("failRun awaits an async patchManifest before logging", async () => {
   await failRun(session, run, "x");
   assert.deepEqual(order, ["patch", "log"]);
 });
+
+test("failRun still logs the original error when patchManifest rejects", async () => {
+  const logs = [];
+  const session = { log: (msg, opts) => logs.push([msg, opts]) };
+  const run = {
+    patchManifest: async () => {
+      throw new Error("disk full");
+    },
+  };
+  // Must not throw, must still log, and must return the run.
+  const returned = await failRun(session, run, "original failure");
+  assert.equal(returned, run);
+  assert.deepEqual(logs, [["original failure", { level: "error" }]]);
+});
