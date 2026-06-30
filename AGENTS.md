@@ -52,6 +52,12 @@ GitHub Copilot CLI multi-agent workflow runtime. 자연어 task 자동 분할 + 
 
 ## 현 단계
 
-Phase 4 / **M4 release** 완료. `/maestro task <자연어>` 가 plan agent (LLM 분할) → 격리된 N child Copilot session 병렬 → synth 종합까지 end-to-end 동작. `/maestro help` UX, plan parser 견고화, 31 단위 테스트, CHANGELOG 정리 완료.
+Phase 6 / **M6 release** 완료. M4 task workflow (plan → fan-out[N] → synth) 위에 다음 추가:
+- **M5 saved workflows** — `runtime/saved-workflows.mjs` 스캔(project>user>bundled) + `/maestro run <name>` / `/maestro workflows`, sandboxed `api` (`buildWorkflowApi`), bundled `deep-review` 예제.
+- **M6 quality helpers** — `runtime/quality.mjs`: `adversarialReview` / `multiAngle` / `fixLoop` / `crossCheck` (`spawnAll` 위, adapter 비종속).
+- **plan 로직 분리** — `runtime/plan.mjs` (importable, 순수 함수).
+- **CI / 정적분석** — ESLint flat config + `.github/workflows/ci.yml` (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 59 단위 테스트.
 
-다음은 (선택) M4.x plan 사전 승인 UI, M5 saved workflows, M6 quality helpers, M7 VS Code surface.
+런타임은 여전히 zero-deps (eslint 등은 devDependencies 한정).
+
+다음은 (선택) M4.x plan 사전 승인 UI, M7 VS Code surface.
