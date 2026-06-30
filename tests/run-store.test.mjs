@@ -92,10 +92,15 @@ test("writeProgress serializes a fire-and-forget burst; the last-issued snapshot
   const baseDir = await freshBase();
   try {
     const run = await createRun({ workflow: "task", baseDir });
-    // Issue a burst without awaiting the intermediate writes, mirroring the
-    // monitor's settle×N + flush sink. Awaiting only the last must drain the
-    // whole serialized chain in order, so progress.json ends on the last snapshot.
-    run.writeProgress({ done: 0, total: 3, updatedAt: 1 }).catch(() => {});
+    // Mirror the monitor's settle×N + flush sink: a burst of un-awaited writes to
+    // the same file, awaiting only the last. The first write carries a large
+    // payload so its atomic rename takes the longest to land; WITHOUT
+    // serialization that stale write would win the race and leave progress.json
+    // on updatedAt:1. Serialization makes issue-order == completion-order, so the
+    // final updatedAt:4 snapshot must win — deterministically, regardless of I/O
+    // timing. (Verified: the unchained impl fails this 10/10; chained passes 10/10.)
+    const big = "x".repeat(8 * 1024 * 1024);
+    run.writeProgress({ done: 0, total: 3, updatedAt: 1, blob: big }).catch(() => {});
     run.writeProgress({ done: 1, total: 3, updatedAt: 2 }).catch(() => {});
     run.writeProgress({ done: 2, total: 3, updatedAt: 3 }).catch(() => {});
     await run.writeProgress({ done: 3, total: 3, updatedAt: 4 });

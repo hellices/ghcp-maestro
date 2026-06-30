@@ -57,3 +57,16 @@ test("spawnAll forwards onProgress to each spec", async () => {
   );
   assert.deepEqual(seen.sort(), ["e0", "e1"]);
 });
+
+test("spawn uses the resolved agent id for progress when spec.id is omitted", async () => {
+  const seen = [];
+  const res = await spawn(
+    { agent: "alpha", prompt: "p" }, // no id — spawn generates one
+    { adapter: emittingAdapter({ state: "running" }), onProgress: (e) => seen.push(e) },
+  );
+  assert.equal(seen.length, 1);
+  // Progress must carry the same id the result is keyed by, so a monitor can
+  // correlate the event to the agent. (Pre-fix it used the raw spec.id → undefined.)
+  assert.notEqual(seen[0].specId, undefined);
+  assert.equal(seen[0].specId, res.id);
+});
