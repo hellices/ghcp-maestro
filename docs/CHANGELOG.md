@@ -7,6 +7,16 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Fixed
+- **`/maestros <runId>` now shows the plan and synth phases too.** Previously
+  only the explore fan-out reported progress, so during the (often minute-plus)
+  `plan` decomposition — and the final `synth` — `/maestros <runId>` showed "no
+  progress recorded yet" and the run looked stuck. A new `runtime/phase-monitor.mjs`
+  (`startPhaseMonitor`) wraps every phase, single-agent or fan-out: it records a
+  `pending` snapshot to `progress.json` the instant a phase begins and threads
+  the planner/synth streaming (bytes/tokens/state) through, so the phase is
+  visible from the moment it starts. Applied across `task` (plan → explore →
+  synth), `brainstorm`, and `hello`. New unit tests:
+  `tests/phase-monitor.test.mjs`.
 - **Task subagents no longer time out on research-heavy runs.** The task
   workflow's plan/explore/synth phases (and the brainstorm lenses) run full
   research subagents — web fetches, repo analysis, many tool calls + extended
