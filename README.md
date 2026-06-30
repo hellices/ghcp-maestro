@@ -59,6 +59,53 @@ claim across multiple sources).
 
 ---
 
+## What you can do with it
+
+`/maestro task` shines on work that is too big for a single back-and-forth — the
+kind of parallel, cross-checked investigation that would otherwise take many
+manual turns. A few examples:
+
+**Codebase audit** — sweep a whole area for one class of problem, in parallel.
+```text
+/maestro task Audit every route under src/api for missing authentication or input validation, and list each gap with the file and a suggested fix
+```
+
+**Large migration / refactor planning** — break a daunting change into a
+coordinated set of angles.
+```text
+/maestro task Plan migrating our REST API to GraphQL: schema design, resolver structure, auth, pagination, and a phased rollout with risks
+```
+
+**Cross-checked research** — gather findings from several independent angles and
+keep only what survives scrutiny.
+```text
+/maestro task Compare PostgreSQL, MySQL, and SQLite for a write-heavy multi-tenant SaaS, cross-checking performance, operations, cost, and migration effort
+```
+
+**Decision / trade-off analysis** — evaluate one decision from multiple lenses
+at once.
+```text
+/maestro task Evaluate whether we should adopt a monorepo: tooling, CI, code sharing, team workflow, and the migration cost — with a recommendation
+```
+
+**Multi-angle brainstorming** — explore a fuzzy topic from fixed perspectives.
+```text
+/maestro brainstorm Ways to cut our cloud bill without hurting reliability
+```
+
+**Repeatable workflows** — once a procedure works, save it as a script and rerun
+it as its own command (e.g. a deep code review you run on every branch):
+```text
+/maestro run deep-review {"topic": "the diff on this branch"}
+```
+
+> ghcp-maestro is a GitHub Copilot CLI take on the **orchestrator-workers**
+> pattern — the same idea behind Claude Code's *dynamic workflows*: plan → fan
+> out parallel agents → cross-check → one synthesized answer, with runs persisted
+> so they can be resumed.
+
+---
+
 ## Commands
 
 | Command | What it does |

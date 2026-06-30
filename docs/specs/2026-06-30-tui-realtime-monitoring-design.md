@@ -21,10 +21,19 @@ real-time progress in the TUI, naturally**, without leaving the session.
 
 - Live, in-TUI view of an in-flight run: per-agent state (pending → running →
   done/failed), elapsed time, and a phase/overall summary.
+- Per-phase **token totals** alongside agent counts and elapsed time (parity with
+  Claude Code's `/workflows` progress view — see §4b).
 - "Natural" — rendered in the normal Copilot CLI TUI, no separate window required.
 - Zero new runtime dependencies; `session.log()`-only output discipline preserved.
 - Degrades gracefully on hosts/modes that don't support richer surfaces.
 - Negligible overhead and no interference with the actual fan-out results.
+
+### Stretch goals (v2 — parity with Claude `/workflows`)
+
+- **Drill-down** into a phase → an agent to read its prompt, recent tool calls,
+  and final result.
+- **Run controls**: pause/resume the run, stop a single agent or the whole run,
+  restart a running agent.
 
 ## 3. Non-goals
 
@@ -32,7 +41,8 @@ real-time progress in the TUI, naturally**, without leaving the session.
   "in-TUI"; explicitly out of scope here).
 - Historical analytics across runs (the existing `/maestros` + RunStore already
   cover after-the-fact inspection).
-- Interactive control (pause/kill individual agents) — monitoring only for v1.
+- Interactive run controls (pause/stop/restart) and drill-down are **out of scope
+  for v1** (read-only live dashboard); they are planned as v2 — see §11.
 
 ## 4. Research findings (SDK facts that make this feasible)
 
@@ -44,8 +54,13 @@ Verified against the installed `@github/copilot-sdk` type definitions
 - The event stream is rich and already includes everything we need for progress:
   - `subagent.started` / `subagent.completed` / `subagent.failed`
   - `tool.execution_start` / `tool.execution_progress` / `tool.execution_complete`
+    (each carries a stable `toolCallId` and `toolName`, so recent tool calls can be
+    listed per agent for drill-down)
   - `assistant.streaming_delta` (carries a cumulative byte count), plus
     `assistant.message_delta`, `assistant.turn_start` / `assistant.turn_end`
+  - `assistant.usage` (carries `inputTokens` / `outputTokens`, plus
+    `cacheReadTokens` / `cacheWriteTokens`) — lets us accumulate a per-agent and
+    per-phase **token total**
   - `session.idle` (turn finished)
 - The host session can emit **ephemeral** log lines:
   `session.log(text, { ephemeral: true })` — transient status that is not
@@ -53,9 +68,31 @@ Verified against the installed `@github/copilot-sdk` type definitions
 - A richer, **experimental** surface exists: canvases
   (`session.capabilities.ui?.canvases`, `joinSession({ canvases: [createCanvas(...)] })`),
   which can render host UI panels.
+- For v2 run controls: `CopilotSession` exposes `abort()` (cancel the in-flight
+  turn) and the host can re-`spawn` a single spec, so stop/restart-an-agent is
+  achievable; pause/resume builds on the existing RunStore cache (a paused run
+  resumes exactly like `/maestro-resume`).
 - Today's `standalone-client.mjs` does **not** subscribe to any child events; it
   only calls `sendAndWait`. So there is no progress signal flowing yet — that is
   the core gap this feature fills.
+
+## 4b. Parity target — Claude Code dynamic workflows
+
+ghcp-maestro is a GitHub Copilot CLI port of the orchestrator-workers pattern that
+Claude Code ships as **dynamic workflows** (plan → fan-out subagents in parallel →
+cross-check → single synthesized answer; 16 concurrent / 1000 per run; saved as
+reusable scripts). The two line up almost 1:1 on the runtime, but Claude's
+`/workflows` **progress view** is the one capability ghcp-maestro lacks, and it is
+exactly what this feature delivers. Claude's progress view offers, per their docs:
+
+- each **phase with its agent count, token total, and elapsed time**;
+- **drill into a phase → an agent** to read its prompt, recent tool calls, and result;
+- **controls**: pause/resume the run (`p`), stop an agent or the whole run (`x`),
+  restart a running agent (`r`), filter agents by status (`f`).
+
+This design adopts the phase/agent/elapsed view **plus token totals** as the v1
+target, and the drill-down + run controls as the v2 target (§11), so the gap to
+the reference feature closes in two well-scoped steps.
 
 ## 5. Approaches considered
 
@@ -105,13 +142,14 @@ exact event stream B would later consume — so v2 is additive, not a rewrite.
 
 ```
 child CopilotSession events
-   │  (subagent.*, tool.execution_*, assistant.streaming_delta, session.idle)
+   │  (subagent.*, tool.execution_*, assistant.streaming_delta,
+   │   assistant.usage, session.idle)
    ▼
-standalone-client.mjs  ── normalize ──▶  ctx.onProgress({ agent, state, bytes, ts })
+standalone-client.mjs  ── normalize ──▶  ctx.onProgress({ agent, state, bytes, tokens?, tool?, ts })
    ▼
 spawn.mjs (spawn/spawnAll forward an onProgress sink to the adapter)
    ▼
-runtime/monitor.mjs  ── aggregate per-agent state + throttle ──▶  render(text)
+runtime/monitor.mjs  ── aggregate per-agent state + tokens + throttle ──▶  render(text)
    ▼
 extension.mjs  ── render = session.log(text, { ephemeral: true })  ──▶  TUI
 ```
@@ -122,14 +160,16 @@ extension.mjs  ── render = session.log(text, { ephemeral: true })  ──▶
   pass an event sink to the adapter via `ctx.onProgress`. No behavior change when
   the sink is absent.
 - **`runtime/adapters/standalone-client.mjs`** — subscribe to the child session's
-  relevant events; translate each to a normalized `ProgressEvent`; call
-  `ctx.onProgress`. Unsubscribe in `finally`. Handlers are wrapped so a monitor
-  error can never break `sendAndWait`.
+  relevant events; translate each to a normalized `ProgressEvent` (state from
+  `subagent.*`/`tool.*`/`streaming_delta`; `tokens` from `assistant.usage`;
+  `tool` name from `tool.execution_start`); call `ctx.onProgress`. Unsubscribe in
+  `finally`. Handlers are wrapped so a monitor error can never break `sendAndWait`.
 - **`runtime/monitor.mjs`** (new) — `createMonitor({ render, now, throttleMs })`
-  maintains per-agent state (`pending|running|streaming|done|failed`, bytes,
-  start/elapsed), renders a compact dashboard string, and calls `render` at most
-  once per `throttleMs` (plus a final flush). Pure and deterministic: inject a
-  fake `now` clock and capture `render` calls in tests.
+  maintains per-agent state (`pending|running|streaming|tool|done|failed`, bytes,
+  accumulated tokens, start/elapsed), renders a compact dashboard string with a
+  per-phase token total, and calls `render` at most once per `throttleMs` (plus a
+  final flush). Pure and deterministic: inject a fake `now` clock and capture
+  `render` calls in tests.
 - **`extension.mjs`** — each workflow runner creates a monitor whose `render`
   calls `session.log(text, { ephemeral: true })`, gated on an opt-out env
   (`GHCP_MAESTRO_NO_MONITOR`) and a safe fallback when ephemeral logging is not
@@ -138,11 +178,11 @@ extension.mjs  ── render = session.log(text, { ephemeral: true })  ──▶
 ### Dashboard (illustrative)
 
 ```
-ghcp-maestro/<runId> · explore 3/5 done · 00:42
-  ✓ user-value-analysis      done    19.2s
-  ✓ technical-feasibility    done    14.9s
-  ⠿ alternatives-comparison  stream  41.0s  3.4KB
-  ⠿ maintenance-cost         run     41.0s
+ghcp-maestro/<runId> · explore 3/5 done · 00:42 · 12.4K tok
+  ✓ user-value-analysis      done    19.2s   3.1K tok
+  ✓ technical-feasibility    done    14.9s   2.8K tok
+  ⠿ alternatives-comparison  stream  41.0s   3.4KB   4.0K tok
+  ⠿ maintenance-cost         run     41.0s           2.5K tok
   · strategic-fit            pending
 ```
 
@@ -174,17 +214,33 @@ pressure; state transitions (start/done/failed) flush promptly.
 ## 11. Phasing
 
 - **Phase 1 (v1):** `spawn` `onProgress` plumbing + `runtime/monitor.mjs` +
-  adapter event subscription + ephemeral dashboard wired into
+  adapter event subscription + ephemeral dashboard (per-agent state + elapsed +
+  bytes + **per-phase token total** from `assistant.usage`) wired into
   `task` / `brainstorm` / `hello`. Unit tests for the monitor and the
   normalization. Docs + CHANGELOG.
-- **Phase 2 (v2, optional):** Canvas-based panel behind
-  `capabilities.ui?.canvases`, consuming the same progress stream.
+- **Phase 2 (v2) — `/workflows`-parity:**
+  - **Drill-down**: a `/maestro watch <runId>` (or expanding the dashboard)
+    that lists phases → agents and, per agent, its prompt, recent tool calls
+    (from `tool.execution_*` `toolCallId`/`toolName`), and result. The monitor
+    already holds per-agent records; this adds a detail renderer fed by the same
+    stream plus the RunStore for finished agents.
+  - **Run controls**: pause/resume (reuses the RunStore resume path), stop an
+    agent or the whole run (`CopilotSession.abort()` + abort signal already
+    threaded through `spawn`), restart a running agent (re-`spawn` the spec).
+    These need an interactive control surface, so they are gated behind host
+    capability and are out of scope for v1.
+  - **Canvas panel** (optional): a richer graphical panel behind
+    `capabilities.ui?.canvases`, consuming the same progress stream.
 
 ## 12. Open questions (for the issue / review)
 
 1. Dashboard layout: compact multi-line table (as above) vs a single refreshing
    line. Default throttle interval (500ms?).
-2. Show streaming byte/token counts, or just state + elapsed?
+2. Token total: show input+output combined, or break out input/output/cache?
+   (Proposed: combined `inputTokens + outputTokens` per phase, matching the
+   single "token total" column Claude's `/workflows` shows.)
 3. Default on, with `GHCP_MAESTRO_NO_MONITOR` opt-out — or default off behind an
    opt-in env? (Proposed: on for interactive hosts, off in `-p`/headless.)
-4. Is the v2 Canvas panel worth pursuing given its experimental status?
+4. v2 controls: is `/maestro watch` the right surface for drill-down +
+   pause/stop/restart, or should it live in the existing `/maestros` view?
+5. Is the v2 Canvas panel worth pursuing given its experimental status?
