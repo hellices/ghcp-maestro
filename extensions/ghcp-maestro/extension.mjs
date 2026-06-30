@@ -2,10 +2,9 @@
 // Loaded by the Copilot CLI as a child process; SESSION_ID is injected via env.
 
 import { joinSession } from "@github/copilot-sdk/extension";
-import { spawn, spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
-import { createLlmMediatedAdapter } from "./runtime/adapters/llm-mediated.mjs";
+import { spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
-import { createRun, openRun, listRuns, defaultBaseDir, newRunId } from "./runtime/run-store.mjs";
+import { createRun, openRun, listRuns, defaultBaseDir } from "./runtime/run-store.mjs";
 import {
   buildPlanPrompt,
   parseAndValidatePlan,
@@ -13,6 +12,16 @@ import {
 } from "./runtime/plan.mjs";
 import { planApprovalGate } from "./runtime/plan-approval.mjs";
 import { failRun } from "./runtime/run-flow.mjs";
+import {
+  TIMEOUT_AGENT_MS,
+  TIMEOUT_EXPLORE_MS,
+  TIMEOUT_LONG_MS,
+} from "./runtime/timeouts.mjs";
+import {
+  runEchoProbe,
+  runAgentRegistrySpawnProbe,
+  runPongProbe,
+} from "./runtime/probes.mjs";
 import {
   exploreResultLine,
   wallClockLine,
@@ -33,13 +42,6 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
-
-/** Per-phase subagent timeouts (ms). Named so the intent is explicit and the
- * values stay consistent across the built-in workflows. */
-const TIMEOUT_PROBE_MS = 30_000;
-const TIMEOUT_AGENT_MS = 60_000;
-const TIMEOUT_EXPLORE_MS = 90_000;
-const TIMEOUT_LONG_MS = 120_000;
 
 /**
  * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
@@ -148,7 +150,7 @@ const MAESTRO_SUBCOMMANDS = [
     name: "pong",
     needsArg: "prompt",
     summary: "Send one prompt to a single isolated child Copilot session and collect the reply (standalone-client adapter diagnostic).",
-    run: (arg) => runPongProbe(session, arg),
+    run: (arg) => runPongProbe(session, arg, getStandaloneAdapter()),
   },
   {
     name: "run",
@@ -358,7 +360,7 @@ if (envRegSpawn && envRegSpawn.trim().length > 0) {
 }
 const envPong = process.env.GHCP_MAESTRO_PROBE_PONG;
 if (envPong && envPong.trim().length > 0) {
-  runPongProbe(session, envPong.trim()).catch(async (err) => {
+  runPongProbe(session, envPong.trim(), getStandaloneAdapter()).catch(async (err) => {
     await session.log(`ghcp-maestro: env pong probe failed: ${err?.message ?? err}`, {
       level: "error",
     });
@@ -502,118 +504,6 @@ async function runHelloWorkflow(session, opts = {}) {
     `ghcp-maestro/${runId}: hello workflow complete (${exploreResults.length + 1} agents across 2 phases)`,
   );
   return run;
-}
-
-// --- Echo probe (LLM-mediated adapter, M2.5) --------------------------------
-
-/**
- * Single-spec probe used to measure end-to-end LLM-mediated round-trip:
- *   - Can an extension command handler call session.sendAndWait?
- *   - Does displayPrompt render in the timeline?
- *   - Do we get an AssistantMessageEvent back inside the handler?
- *
- * Sends ONE spec through the LLM adapter and logs the round-trip + reply
- * length. If sendAndWait deadlocks against the handler's own turn, this
- * probe is where we will find out.
- */
-async function runEchoProbe(session, prompt) {
-  const runId = newRunId();
-  const adapter = createLlmMediatedAdapter({ session });
-  await session.log(
-    `ghcp-maestro/${runId}: echo probe (adapter=${adapter.name}, prompt=${JSON.stringify(prompt)})`,
-  );
-  const t0 = Date.now();
-  const result = await spawn(
-    { prompt, agent: "echo", id: `${runId}-echo`, timeoutMs: TIMEOUT_PROBE_MS },
-    { adapter },
-  );
-  const elapsed = Date.now() - t0;
-  if (result.status === "ok") {
-    const text = (result.output?.text ?? "").trim();
-    await session.log(
-      `ghcp-maestro/${runId}: echo ok in ${elapsed}ms; reply chars=${text.length}; preview=${JSON.stringify(text.slice(0, 120))}`,
-    );
-  } else {
-    await session.log(
-      `ghcp-maestro/${runId}: echo ${result.status} in ${elapsed}ms: ${result.error ?? "(no error message)"}`,
-      { level: "warning" },
-    );
-  }
-}
-
-// --- agentRegistry.spawn probe (M2.6 B) -------------------------------------
-
-/**
- * Calls session.rpc.agentRegistry.spawn() with a minimal payload to find out
- * whether the controller-local spawn gate is open in our context. When the
- * gate is closed the SDK returns a JSON-RPC MethodNotFound — so we report
- * exactly what came back without throwing.
- */
-async function runAgentRegistrySpawnProbe(session, prompt) {
-  const runId = newRunId();
-  await session.log(
-    `ghcp-maestro/${runId}: agentRegistry.spawn probe starting (prompt=${JSON.stringify(prompt)})`,
-  );
-  const cwd = process.env.COPILOT_CLI_CWD ?? process.cwd();
-  const t0 = Date.now();
-  try {
-    const rpc = session.rpc;
-    if (!rpc?.agentRegistry?.spawn) {
-      await session.log(
-        `ghcp-maestro/${runId}: session.rpc.agentRegistry.spawn is undefined; SDK surface missing`,
-        { level: "warning" },
-      );
-      return;
-    }
-    const result = await rpc.agentRegistry.spawn({
-      cwd,
-      name: `ghcp-maestro-probe-${runId}`,
-      initialPrompt: prompt,
-    });
-    const elapsed = Date.now() - t0;
-    await session.log(
-      `ghcp-maestro/${runId}: agentRegistry.spawn returned kind=${result?.kind} in ${elapsed}ms — ${JSON.stringify(result).slice(0, 400)}`,
-    );
-  } catch (err) {
-    const elapsed = Date.now() - t0;
-    await session.log(
-      `ghcp-maestro/${runId}: agentRegistry.spawn threw after ${elapsed}ms: ${err?.name ?? "Error"}: ${err?.message ?? String(err)}`,
-      { level: "warning" },
-    );
-  }
-}
-
-// --- Pong probe (standalone-client adapter, M2.6 C) -------------------------
-
-/**
- * Drives the standalone CopilotClient adapter end-to-end with a single spec.
- * On success the reply text is logged back into the host session. Failure
- * surfaces the adapter's error message verbatim so we know whether nested
- * Copilot CLI spawn / auth / RPC works in this environment.
- */
-async function runPongProbe(session, prompt) {
-  const runId = newRunId();
-  const adapter = getStandaloneAdapter();
-  await session.log(
-    `ghcp-maestro/${runId}: pong probe (adapter=${adapter.name}, prompt=${JSON.stringify(prompt)})`,
-  );
-  const t0 = Date.now();
-  const result = await spawn(
-    { prompt, agent: "pong", id: `${runId}-pong`, timeoutMs: TIMEOUT_AGENT_MS },
-    { adapter },
-  );
-  const elapsed = Date.now() - t0;
-  if (result.status === "ok") {
-    const text = (result.output?.text ?? "").trim();
-    await session.log(
-      `ghcp-maestro/${runId}: pong ok in ${elapsed}ms; childSessionId=${result.output?.sessionId ?? "?"}; chars=${text.length}; preview=${JSON.stringify(text.slice(0, 200))}`,
-    );
-  } else {
-    await session.log(
-      `ghcp-maestro/${runId}: pong ${result.status} in ${elapsed}ms: ${result.error ?? "(no error message)"}`,
-      { level: "warning" },
-    );
-  }
 }
 
 // --- Brainstorm workflow (M2.6 demo) ----------------------------------------
