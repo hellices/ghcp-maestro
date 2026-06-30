@@ -37,6 +37,21 @@ export function newRunId() {
 }
 
 /**
+ * Reject a runId that could escape the runs/ directory. `openRun` is the
+ * /maestro-resume entry point, so its runId is user-supplied and must never be
+ * joined into a path without this check (path traversal).
+ * @param {string} runId
+ */
+function assertSafeRunId(runId) {
+  if (typeof runId !== "string" || runId.length === 0) {
+    throw new Error("openRun: runId must be a non-empty string");
+  }
+  if (/[/\\]/.test(runId) || runId.includes("..") || runId.includes("\0")) {
+    throw new Error(`openRun: unsafe runId ${JSON.stringify(runId)}`);
+  }
+}
+
+/**
  * Create a fresh run on disk. Returns a RunHandle that can record agents
  * and update status. Idempotent if the dir already exists.
  *
@@ -67,6 +82,7 @@ export async function createRun(opts) {
  * @param {{ baseDir?: string }} [opts]
  */
 export async function openRun(runId, opts = {}) {
+  assertSafeRunId(runId);
   const baseDir = opts.baseDir ?? defaultBaseDir();
   const runDir = join(baseDir, "runs", runId);
   const manifest = await readJson(join(runDir, "manifest.json"));
@@ -170,7 +186,7 @@ function makeHandle(runDir, manifest) {
 
 export async function writeJsonAtomic(filePath, value) {
   await mkdir(dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  const tmp = `${filePath}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   await writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
   await rename(tmp, filePath);
 }
