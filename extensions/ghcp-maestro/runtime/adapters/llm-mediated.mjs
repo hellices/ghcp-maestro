@@ -13,11 +13,12 @@
 //     parse structured replies.
 //   - This adapter does NOT spawn isolated child agent contexts. The reply
 //     comes from the same model/session as the user's chat. For true
-//     isolation use the `agent-registry` or `standalone-client` adapter
-//     (planned for later milestones).
+//     isolation use the `standalone-client` adapter.
 //
 // @experimental Real-world LLM behavior may produce non-deterministic
 // formatting; consumers should treat `output.text` as opaque.
+
+import { extractText } from "./reply-text.mjs";
 
 /**
  * @typedef {import("../spawn.mjs").SubagentAdapter} SubagentAdapter
@@ -76,14 +77,3 @@ function buildSubagentPrompt(spec, sentinel) {
   return lines.filter((l) => l !== null).join("\n");
 }
 
-function extractText(assistantEvent) {
-  if (!assistantEvent) return "";
-  const data = assistantEvent.data ?? assistantEvent;
-  if (typeof data?.content === "string") return data.content;
-  if (Array.isArray(data?.content)) {
-    return data.content
-      .map((c) => (typeof c === "string" ? c : c?.text ?? ""))
-      .join("");
-  }
-  return "";
-}

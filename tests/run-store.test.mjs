@@ -69,6 +69,28 @@ test("writeJsonAtomic does not leave a partial file on success", async () => {
   }
 });
 
+test("writeJsonAtomic overwrites an existing target (atomic replace)", async () => {
+  const baseDir = await freshBase();
+  try {
+    const target = join(baseDir, "m.json");
+    await writeJsonAtomic(target, { v: 1 });
+    await writeJsonAtomic(target, { v: 2 });
+    await writeJsonAtomic(target, { v: 3 });
+    assert.deepEqual(await readJson(target), { v: 3 });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("openRun rejects unsafe runIds (path traversal)", async () => {
+  for (const bad of ["../escape", "..", "a/b", "a\\b", "", "x\0y"]) {
+    await assert.rejects(
+      () => openRun(bad, { baseDir: "/tmp/ghcp-maestro-nonexistent" }),
+      /unsafe runId|non-empty string/,
+    );
+  }
+});
+
 test("spawn with runHandle persists and reuses cached results", async () => {
   const baseDir = await freshBase();
   try {

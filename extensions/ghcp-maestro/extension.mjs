@@ -2,8 +2,7 @@
 // Loaded by the Copilot CLI as a child process; SESSION_ID is injected via env.
 
 import { joinSession } from "@github/copilot-sdk/extension";
-import { spawn, spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
-import { createLlmMediatedAdapter } from "./runtime/adapters/llm-mediated.mjs";
+import { spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
 import { createRun, openRun, listRuns, defaultBaseDir } from "./runtime/run-store.mjs";
 import {
@@ -12,6 +11,27 @@ import {
   sanitizeAgentName,
 } from "./runtime/plan.mjs";
 import { planApprovalGate } from "./runtime/plan-approval.mjs";
+import { failRun } from "./runtime/run-flow.mjs";
+import {
+  TIMEOUT_AGENT_MS,
+  TIMEOUT_EXPLORE_MS,
+  TIMEOUT_LONG_MS,
+} from "./runtime/timeouts.mjs";
+import {
+  runEchoProbe,
+  runAgentRegistrySpawnProbe,
+  runPongProbe,
+  dispatchEnvTriggers,
+} from "./runtime/probes.mjs";
+import {
+  exploreResultLine,
+  wallClockLine,
+  allFailed,
+  agentDigest,
+  logExploreResults,
+  labeledDumpLine,
+  synthStatusLine,
+} from "./runtime/workflow-log.mjs";
 import {
   defaultWorkflowDirs,
   scanSavedWorkflows,
@@ -23,6 +43,15 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
+ * @param {string | undefined} value
+ * @returns {boolean}
+ */
+function isTruthyEnv(value) {
+  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
+}
 
 /**
  * Saved workflows discovered at startup, keyed by name. Populated before
@@ -103,43 +132,43 @@ const MAESTRO_SUBCOMMANDS = [
   {
     name: "task",
     needsArg: "task description",
-    summary: "LLM 이 자연어 task 를 3-6 subtask 로 자동 분할 → 격리된 child Copilot 세션에서 진짜 병렬 실행 → synth 가 cross-check 후 최종 답변",
+    summary: "Decompose a natural-language task into 3-6 subtasks → run each in an isolated child Copilot session in parallel → synth cross-checks them into a final answer.",
     run: (arg) => runTaskWorkflow(session, arg),
   },
   {
     name: "brainstorm",
     needsArg: "topic",
-    summary: "고정 4-각도 (tech/ux/biz/risk) 데모. 각 lens 가 격리된 child session 에서 동시 실행 후 synth 가 TOP 3 actions 도출.",
+    summary: "Fixed 4-lens demo (tech/ux/biz/risk). Each lens runs in an isolated child session in parallel, then synth derives the TOP 3 actions.",
     run: (arg) => runBrainstormWorkflow(session, arg),
   },
   {
     name: "hello",
     needsArg: false,
-    summary: "M2.6 데모 — 3 explore + 1 synth 고정 스크립트, 모두 격리된 child session.",
+    summary: "M2.6 demo — fixed 3 explore + 1 synth script, all isolated child sessions.",
     run: () => runHelloWorkflow(session),
   },
   {
     name: "pong",
     needsArg: "prompt",
-    summary: "단일 격리된 child Copilot session 에 prompt 1번 송신 → 응답 회수 (standalone-client adapter 진단용).",
-    run: (arg) => runPongProbe(session, arg),
+    summary: "Send one prompt to a single isolated child Copilot session and collect the reply (standalone-client adapter diagnostic).",
+    run: (arg) => runPongProbe(session, arg, getStandaloneAdapter()),
   },
   {
     name: "run",
     needsArg: "name [args]",
-    summary: "저장된 워크플로우 실행 (M5). 예: /maestro run deep-review {\"topic\":\"...\"} — args 는 JSON 또는 평문(=> {input}).",
+    summary: "Run a saved workflow (M5). e.g. /maestro run deep-review {\"topic\":\"...\"} — args are JSON or plain text (=> {input}).",
     run: (arg) => runSavedWorkflowCommand(session, arg),
   },
   {
     name: "workflows",
     needsArg: false,
-    summary: "발견된 저장 워크플로우 목록 (project > user > bundled 우선순위).",
+    summary: "List discovered saved workflows (priority: project > user > bundled).",
     run: () => listSavedWorkflows(session),
   },
   {
     name: "help",
     needsArg: false,
-    summary: "이 도움말.",
+    summary: "This help.",
     run: () => Promise.resolve(),
   },
 ];
@@ -258,10 +287,7 @@ const session = await joinSession({
         try {
           await wf(session, run.manifest.args, { run });
         } catch (err) {
-          await run.patchManifest({ status: "error" });
-          await session.log(`ghcp-maestro: resume failed: ${err?.message ?? err}`, {
-            level: "error",
-          });
+          await failRun(session, run, `ghcp-maestro: resume failed: ${err?.message ?? err}`);
         }
       },
     },
@@ -291,7 +317,7 @@ const session = await joinSession({
 });
 
 await session.log(
-  `ghcp-maestro extension loaded (M6 release). Run '/maestro help' for subcommands.${SAVED_WORKFLOWS.size > 0 ? ` ${SAVED_WORKFLOWS.size} saved workflow(s): ${[...SAVED_WORKFLOWS.keys()].join(", ")}.` : ""}`,
+  `ghcp-maestro extension loaded. Run '/maestro help' for subcommands.${SAVED_WORKFLOWS.size > 0 ? ` ${SAVED_WORKFLOWS.size} saved workflow(s): ${[...SAVED_WORKFLOWS.keys()].join(", ")}.` : ""}`,
   {
     ephemeral: true,
   },
@@ -303,104 +329,80 @@ for (const s of SAVED_WORKFLOWS_SKIPPED) {
   });
 }
 
-// --- Probe trigger (M2.5/M2.6 measurement) ---------------------------------
+// --- Probe / workflow env triggers (M2.5/M2.6 measurement) ------------------
 //
-// Env-triggered probes for non-interactive validation:
-//   GHCP_MAESTRO_PROBE_ECHO=<text>      → LLM-mediated adapter on the current session
-//   GHCP_MAESTRO_PROBE_REGSPAWN=<text>  → session.rpc.agentRegistry.spawn() probe (B)
-//   GHCP_MAESTRO_PROBE_PONG=<text>      → standalone CopilotClient adapter probe (C)
-//   GHCP_MAESTRO_PROBE_HELLO=1          → run the full /maestro hello workflow
+// Env-triggered entry points for non-interactive validation. Fired fire-and-
+// forget (not awaited at the top level) so joinSession() can return and the host
+// marks the extension "ready" before we issue any session RPC.
+//
+//   GHCP_MAESTRO_PROBE_ECHO=<text>        → LLM-mediated adapter on the current session
+//   GHCP_MAESTRO_PROBE_REGSPAWN=<text>    → session.rpc.agentRegistry.spawn() probe (B)
+//   GHCP_MAESTRO_PROBE_PONG=<text>        → standalone CopilotClient adapter probe (C)
+//   GHCP_MAESTRO_PROBE_HELLO=1            → run the full /maestro hello workflow
 //   GHCP_MAESTRO_PROBE_BRAINSTORM=<topic> → run the brainstorm workflow
-//   GHCP_MAESTRO_PROBE_TASK=<task>      → run the M4 dynamic task workflow
-//   GHCP_MAESTRO_PROBE_RESUME=<runId>   → resume the named run (M3)
-//
-// Not awaited at the top level — let joinSession() return first so the host
-// considers the extension "ready" before we issue any session RPC.
-const envEcho = process.env.GHCP_MAESTRO_PROBE_ECHO;
-if (envEcho && envEcho.trim().length > 0) {
-  runEchoProbe(session, envEcho.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env echo probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envRegSpawn = process.env.GHCP_MAESTRO_PROBE_REGSPAWN;
-if (envRegSpawn && envRegSpawn.trim().length > 0) {
-  runAgentRegistrySpawnProbe(session, envRegSpawn.trim()).catch(async (err) => {
-    await session.log(
-      `ghcp-maestro: env agentRegistry probe failed: ${err?.message ?? err}`,
-      { level: "error" },
-    );
-  });
-}
-const envPong = process.env.GHCP_MAESTRO_PROBE_PONG;
-if (envPong && envPong.trim().length > 0) {
-  runPongProbe(session, envPong.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env pong probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envHello = process.env.GHCP_MAESTRO_PROBE_HELLO;
-if (envHello && envHello.trim().length > 0) {
-  runHelloWorkflow(session).catch(async (err) => {
-    await session.log(`ghcp-maestro: env hello probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envBrainstorm = process.env.GHCP_MAESTRO_PROBE_BRAINSTORM;
-if (envBrainstorm && envBrainstorm.trim().length > 0) {
-  runBrainstormWorkflow(session, envBrainstorm.trim()).catch(async (err) => {
-    await session.log(
-      `ghcp-maestro: env brainstorm probe failed: ${err?.message ?? err}`,
-      { level: "error" },
-    );
-  });
-}
-const envTask = process.env.GHCP_MAESTRO_PROBE_TASK;
-if (envTask && envTask.trim().length > 0) {
-  runTaskWorkflow(session, envTask.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env task probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envRun = process.env.GHCP_MAESTRO_PROBE_RUN;
-if (envRun && envRun.trim().length > 0) {
-  runSavedWorkflowCommand(session, envRun.trim()).catch(async (err) => {
-    await session.log(`ghcp-maestro: env run probe failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
-  });
-}
-const envResume = process.env.GHCP_MAESTRO_PROBE_RESUME;
-if (envResume && envResume.trim().length > 0) {
-  (async () => {
-    let run;
-    try {
-      run = await openRun(envResume.trim());
-      const wf = resolveWorkflowHandler(run.manifest.workflow);
-      if (!wf) {
-        await session.log(
-          `ghcp-maestro: env resume failed — workflow '${run.manifest.workflow}' not registered`,
-          { level: "error" },
-        );
-        return;
-      }
-      await session.log(`ghcp-maestro: env resume ${run.runId} workflow=${run.manifest.workflow}`);
-      await run.patchManifest({ status: "running" });
-      await wf(session, run.manifest.args, { run });
-    } catch (err) {
-      // The run was already flipped to "running"; ensure a failure transitions
-      // it to a terminal "error" rather than hanging forever in /maestros.
-      await run?.patchManifest({ status: "error" });
-      await session.log(`ghcp-maestro: env resume probe failed: ${err?.message ?? err}`, {
-        level: "error",
-      });
+//   GHCP_MAESTRO_PROBE_TASK=<task>        → run the M4 dynamic task workflow
+//   GHCP_MAESTRO_PROBE_RUN=<name [args]>  → run a saved workflow
+//   GHCP_MAESTRO_PROBE_RESUME=<runId>     → resume the named run (M3)
+
+/**
+ * Resume a run named by the env probe. Unlike the interactive /maestro-resume
+ * handler (which reports openRun / not-registered / run failures separately), the
+ * probe path funnels every failure into one failRun so a half-started run can't
+ * hang in "running". Never throws — the dispatcher's catch is a safety net only.
+ */
+async function resumeRunFromEnv(session, runId) {
+  let run;
+  try {
+    run = await openRun(runId);
+    const wf = resolveWorkflowHandler(run.manifest.workflow);
+    if (!wf) {
+      await session.log(
+        `ghcp-maestro: env resume failed — workflow '${run.manifest.workflow}' not registered`,
+        { level: "error" },
+      );
+      return;
     }
-  })();
+    await session.log(`ghcp-maestro: env resume ${run.runId} workflow=${run.manifest.workflow}`);
+    await run.patchManifest({ status: "running" });
+    await wf(session, run.manifest.args, { run });
+  } catch (err) {
+    await failRun(session, run, `ghcp-maestro: env resume probe failed: ${err?.message ?? err}`);
+  }
 }
+
+dispatchEnvTriggers(
+  process.env,
+  [
+    { env: "GHCP_MAESTRO_PROBE_ECHO", label: "echo probe", run: (v) => runEchoProbe(session, v) },
+    {
+      env: "GHCP_MAESTRO_PROBE_REGSPAWN",
+      label: "agentRegistry probe",
+      run: (v) => runAgentRegistrySpawnProbe(session, v),
+    },
+    {
+      env: "GHCP_MAESTRO_PROBE_PONG",
+      label: "pong probe",
+      run: (v) => runPongProbe(session, v, getStandaloneAdapter()),
+    },
+    {
+      env: "GHCP_MAESTRO_PROBE_HELLO",
+      label: "hello probe",
+      run: (v) => (isTruthyEnv(v) ? runHelloWorkflow(session) : undefined),
+    },
+    {
+      env: "GHCP_MAESTRO_PROBE_BRAINSTORM",
+      label: "brainstorm probe",
+      run: (v) => runBrainstormWorkflow(session, v),
+    },
+    { env: "GHCP_MAESTRO_PROBE_TASK", label: "task probe", run: (v) => runTaskWorkflow(session, v) },
+    { env: "GHCP_MAESTRO_PROBE_RUN", label: "run probe", run: (v) => runSavedWorkflowCommand(session, v) },
+    { env: "GHCP_MAESTRO_PROBE_RESUME", label: "resume probe", run: (v) => resumeRunFromEnv(session, v) },
+  ],
+  {
+    onError: (label, err) =>
+      session.log(`ghcp-maestro: env ${label} failed: ${err?.message ?? err}`, { level: "error" }),
+  },
+);
 
 // --- Hello workflow (standalone adapter, M2.6) ------------------------------
 
@@ -429,35 +431,30 @@ async function runHelloWorkflow(session, opts = {}) {
       prompt:
         "Reply with the single word ALPHA. No punctuation, no explanation.",
       agent: "explore-a",
-      timeoutMs: 60_000,
+      timeoutMs: TIMEOUT_AGENT_MS,
     },
     {
       id: "explore-b",
       prompt:
         "Reply with the single word BRAVO. No punctuation, no explanation.",
       agent: "explore-b",
-      timeoutMs: 60_000,
+      timeoutMs: TIMEOUT_AGENT_MS,
     },
     {
       id: "explore-c",
       prompt:
         "Reply with the single word CHARLIE. No punctuation, no explanation.",
       agent: "explore-c",
-      timeoutMs: 60_000,
+      timeoutMs: TIMEOUT_AGENT_MS,
     },
   ];
   const t1 = Date.now();
   const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
   for (const r of exploreResults) {
-    const preview = (r.output?.text ?? "").trim().slice(0, 40);
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} status=${r.status}${r.cached ? " (cached)" : ""} took=${r.finishedAt - r.startedAt}ms reply=${JSON.stringify(preview)}`,
-    );
+    await session.log(exploreResultLine(runId, r, { mode: "reply" }));
   }
-  await session.log(
-    `ghcp-maestro/${runId}: phase=explore wall-clock=${phase1Elapsed}ms (parallel of 3)`,
-  );
+  await session.log(wallClockLine(runId, phase1Elapsed, 3));
 
   // Phase 2 — synth (uses outputs from phase 1)
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
@@ -471,7 +468,7 @@ async function runHelloWorkflow(session, opts = {}) {
         id: "synth",
         prompt: `Three explore agents replied below. Join their replies with a single space, in the order they appear, and reply with only that joined string — no punctuation, no explanation.\n\n${collected}`,
         agent: "synth",
-        timeoutMs: 60_000,
+        timeoutMs: TIMEOUT_AGENT_MS,
       },
     ],
     { adapter, runHandle: run },
@@ -487,122 +484,6 @@ async function runHelloWorkflow(session, opts = {}) {
     `ghcp-maestro/${runId}: hello workflow complete (${exploreResults.length + 1} agents across 2 phases)`,
   );
   return run;
-}
-
-function newRunId() {
-  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// --- Echo probe (LLM-mediated adapter, M2.5) --------------------------------
-
-/**
- * Single-spec probe used to measure end-to-end LLM-mediated round-trip:
- *   - Can an extension command handler call session.sendAndWait?
- *   - Does displayPrompt render in the timeline?
- *   - Do we get an AssistantMessageEvent back inside the handler?
- *
- * Sends ONE spec through the LLM adapter and logs the round-trip + reply
- * length. If sendAndWait deadlocks against the handler's own turn, this
- * probe is where we will find out.
- */
-async function runEchoProbe(session, prompt) {
-  const runId = newRunId();
-  const adapter = createLlmMediatedAdapter({ session });
-  await session.log(
-    `ghcp-maestro/${runId}: echo probe (adapter=${adapter.name}, prompt=${JSON.stringify(prompt)})`,
-  );
-  const t0 = Date.now();
-  const result = await spawn(
-    { prompt, agent: "echo", id: `${runId}-echo`, timeoutMs: 30_000 },
-    { adapter },
-  );
-  const elapsed = Date.now() - t0;
-  if (result.status === "ok") {
-    const text = (result.output?.text ?? "").trim();
-    await session.log(
-      `ghcp-maestro/${runId}: echo ok in ${elapsed}ms; reply chars=${text.length}; preview=${JSON.stringify(text.slice(0, 120))}`,
-    );
-  } else {
-    await session.log(
-      `ghcp-maestro/${runId}: echo ${result.status} in ${elapsed}ms: ${result.error ?? "(no error message)"}`,
-      { level: "warning" },
-    );
-  }
-}
-
-// --- agentRegistry.spawn probe (M2.6 B) -------------------------------------
-
-/**
- * Calls session.rpc.agentRegistry.spawn() with a minimal payload to find out
- * whether the controller-local spawn gate is open in our context. When the
- * gate is closed the SDK returns a JSON-RPC MethodNotFound — so we report
- * exactly what came back without throwing.
- */
-async function runAgentRegistrySpawnProbe(session, prompt) {
-  const runId = newRunId();
-  await session.log(
-    `ghcp-maestro/${runId}: agentRegistry.spawn probe starting (prompt=${JSON.stringify(prompt)})`,
-  );
-  const cwd = process.env.COPILOT_CLI_CWD ?? process.cwd();
-  const t0 = Date.now();
-  try {
-    const rpc = session.rpc;
-    if (!rpc?.agentRegistry?.spawn) {
-      await session.log(
-        `ghcp-maestro/${runId}: session.rpc.agentRegistry.spawn is undefined; SDK surface missing`,
-        { level: "warning" },
-      );
-      return;
-    }
-    const result = await rpc.agentRegistry.spawn({
-      cwd,
-      name: `ghcp-maestro-probe-${runId}`,
-      initialPrompt: prompt,
-    });
-    const elapsed = Date.now() - t0;
-    await session.log(
-      `ghcp-maestro/${runId}: agentRegistry.spawn returned kind=${result?.kind} in ${elapsed}ms — ${JSON.stringify(result).slice(0, 400)}`,
-    );
-  } catch (err) {
-    const elapsed = Date.now() - t0;
-    await session.log(
-      `ghcp-maestro/${runId}: agentRegistry.spawn threw after ${elapsed}ms: ${err?.name ?? "Error"}: ${err?.message ?? String(err)}`,
-      { level: "warning" },
-    );
-  }
-}
-
-// --- Pong probe (standalone-client adapter, M2.6 C) -------------------------
-
-/**
- * Drives the standalone CopilotClient adapter end-to-end with a single spec.
- * On success the reply text is logged back into the host session. Failure
- * surfaces the adapter's error message verbatim so we know whether nested
- * Copilot CLI spawn / auth / RPC works in this environment.
- */
-async function runPongProbe(session, prompt) {
-  const runId = newRunId();
-  const adapter = getStandaloneAdapter();
-  await session.log(
-    `ghcp-maestro/${runId}: pong probe (adapter=${adapter.name}, prompt=${JSON.stringify(prompt)})`,
-  );
-  const t0 = Date.now();
-  const result = await spawn(
-    { prompt, agent: "pong", id: `${runId}-pong`, timeoutMs: 60_000 },
-    { adapter },
-  );
-  const elapsed = Date.now() - t0;
-  if (result.status === "ok") {
-    const text = (result.output?.text ?? "").trim();
-    await session.log(
-      `ghcp-maestro/${runId}: pong ok in ${elapsed}ms; childSessionId=${result.output?.sessionId ?? "?"}; chars=${text.length}; preview=${JSON.stringify(text.slice(0, 200))}`,
-    );
-  } else {
-    await session.log(
-      `ghcp-maestro/${runId}: pong ${result.status} in ${elapsed}ms: ${result.error ?? "(no error message)"}`,
-      { level: "warning" },
-    );
-  }
 }
 
 // --- Brainstorm workflow (M2.6 demo) ----------------------------------------
@@ -667,53 +548,32 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
       "",
       "Reply with 3-5 short bullet points. Be concrete and specific to this topic. No preamble, no 'as an AI', just the bullets.",
     ].join("\n"),
-    timeoutMs: 90_000,
+    timeoutMs: TIMEOUT_EXPLORE_MS,
   }));
 
   const t1 = Date.now();
   const results = await spawnAll(specs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
 
-  for (const r of results) {
-    const text = (r.output?.text ?? "").trim();
-    const firstLine = text.split("\n")[0] ?? "";
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} status=${r.status}${r.cached ? " (cached)" : ""} took=${r.finishedAt - r.startedAt}ms chars=${text.length} preview=${JSON.stringify(firstLine.slice(0, 100))}`,
-    );
-  }
-  await session.log(
-    `ghcp-maestro/${runId}: phase=explore wall-clock=${phase1Elapsed}ms (parallel of ${angles.length})`,
-  );
-
-  for (const r of results) {
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} FULL ↓\n${(r.output?.text ?? "(empty)").trim()}`,
-    );
-  }
-
-  // spawnAll reports per-agent failure in-band (status !== "ok"). Surface those
-  // and refuse to persist a successful run when there is nothing to synthesise.
-  const failedExplore = results.filter((r) => r.status !== "ok");
-  if (failedExplore.length > 0) {
-    await session.log(
-      `ghcp-maestro/${runId}: ${failedExplore.length}/${results.length} explore agent(s) failed: ${failedExplore.map((r) => `${r.spec.agent}=${r.status}`).join(", ")}`,
-      { level: "warning" },
-    );
-  }
-  if (results.every((r) => r.status !== "ok")) {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+  await logExploreResults({
+    runId,
+    results,
+    elapsedMs: phase1Elapsed,
+    count: angles.length,
+    label: "explore",
+    log: (msg, opts) => session.log(msg, opts),
+  });
+  if (allFailed(results)) {
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: brainstorm aborted — all ${results.length} explore agents failed`,
-      { level: "error" },
     );
-    return run;
   }
 
   // Phase 2 — synth
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
-  const digest = results
-    .map((r) => `## ${r.spec.agent}\n${(r.output?.text ?? "").trim()}`)
-    .join("\n\n");
+  const digest = agentDigest(results);
   const synthPrompt = [
     `You are a synthesis agent. Four independent agents brainstormed the topic from different lenses. Pick the strongest 3 actionable next steps that survive cross-checking across lenses.`,
     "",
@@ -727,24 +587,19 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
 
   const t2 = Date.now();
   const [synth] = await spawnAll(
-    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: 120_000 }],
+    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: TIMEOUT_LONG_MS }],
     { adapter, runHandle: run },
   );
   const phase2Elapsed = Date.now() - t2;
-  await session.log(
-    `ghcp-maestro/${runId}: synth status=${synth.status}${synth.cached ? " (cached)" : ""} took=${synth.finishedAt - synth.startedAt}ms`,
-  );
-  await session.log(
-    `ghcp-maestro/${runId}: TOP 3 NEXT STEPS ↓\n${(synth.output?.text ?? "(empty)").trim()}`,
-  );
+  await session.log(synthStatusLine(runId, synth));
+  await session.log(labeledDumpLine(runId, "TOP 3 NEXT STEPS", synth));
 
   if (synth.status !== "ok") {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: brainstorm failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
-      { level: "error" },
     );
-    return run;
   }
 
   await run.complete();
@@ -771,15 +626,6 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
  * All three phases share a RunHandle, so any subagent that already succeeded
  * before a crash is replayed from cache on /maestro-resume.
  */
-/**
- * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
- * @param {string | undefined} value
- * @returns {boolean}
- */
-function isTruthyEnv(value) {
-  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
-}
-
 async function runTaskWorkflow(session, task, opts = {}) {
   const run = opts.run ?? (await createRun({ workflow: "task", args: { task } }));
   const runId = run.runId;
@@ -793,17 +639,16 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const planSpec = {
     id: "plan",
     agent: "plan",
-    timeoutMs: 120_000,
+    timeoutMs: TIMEOUT_LONG_MS,
     prompt: buildPlanPrompt(task),
   };
   const [planResult] = await spawnAll([planSpec], { adapter, runHandle: run });
   if (planResult.status !== "ok") {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: plan agent ${planResult.status}: ${planResult.error ?? "(no error)"}`,
-      { level: "error" },
     );
-    return run;
   }
   const planText = (planResult.output?.text ?? "").trim();
   await session.log(
@@ -823,26 +668,25 @@ async function runTaskWorkflow(session, task, opts = {}) {
     const retrySpec = {
       id: "plan-retry",
       agent: "plan",
-      timeoutMs: 120_000,
+      timeoutMs: TIMEOUT_LONG_MS,
       prompt: buildPlanPrompt(task, err.message, planText),
     };
     const [retryResult] = await spawnAll([retrySpec], { adapter, runHandle: run });
     if (retryResult.status !== "ok") {
-      await run.patchManifest({ status: "error" });
-      await session.log(
+      return failRun(
+        session,
+        run,
         `ghcp-maestro/${runId}: plan retry ${retryResult.status}: ${retryResult.error ?? "(no error)"}`,
-        { level: "error" },
       );
-      return run;
     }
     try {
       specs = parseAndValidatePlan((retryResult.output?.text ?? "").trim());
     } catch (err2) {
-      await run.patchManifest({ status: "error" });
-      await session.log(`ghcp-maestro/${runId}: plan retry also unparseable: ${err2.message}`, {
-        level: "error",
-      });
-      return run;
+      return failRun(
+        session,
+        run,
+        `ghcp-maestro/${runId}: plan retry also unparseable: ${err2.message}`,
+      );
     }
   }
 
@@ -887,57 +731,34 @@ async function runTaskWorkflow(session, task, opts = {}) {
     id: `explore-${i}-${sanitizeAgentName(s.agent)}`,
     agent: s.agent,
     prompt: s.prompt,
-    timeoutMs: 120_000,
+    timeoutMs: TIMEOUT_LONG_MS,
   }));
   const t1 = Date.now();
   const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
-  for (const r of exploreResults) {
-    const text = (r.output?.text ?? "").trim();
-    const firstLine = text.split("\n")[0] ?? "";
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} status=${r.status}${r.cached ? " (cached)" : ""} took=${r.finishedAt - r.startedAt}ms chars=${text.length} preview=${JSON.stringify(firstLine.slice(0, 100))}`,
-    );
-  }
-  await session.log(
-    `ghcp-maestro/${runId}: phase=explore wall-clock=${phase1Elapsed}ms (parallel of ${specs.length})`,
-  );
-
-  // Optional: dump the full per-subtask outputs into the session log so the
-  // human can inspect them alongside the final synth.
-  for (const r of exploreResults) {
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} FULL ↓\n${(r.output?.text ?? "(empty)").trim()}`,
-    );
-  }
-
-  // spawnAll reports per-agent failure in-band. Surface failures and don't
-  // synthesise (or persist success) when every subtask failed.
-  const failedExplore = exploreResults.filter((r) => r.status !== "ok");
-  if (failedExplore.length > 0) {
-    await session.log(
-      `ghcp-maestro/${runId}: ${failedExplore.length}/${exploreResults.length} subtask agent(s) failed: ${failedExplore.map((r) => `${r.spec.agent}=${r.status}`).join(", ")}`,
-      { level: "warning" },
-    );
-  }
-  if (exploreResults.every((r) => r.status !== "ok")) {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+  await logExploreResults({
+    runId,
+    results: exploreResults,
+    elapsedMs: phase1Elapsed,
+    count: specs.length,
+    label: "subtask",
+    log: (msg, opts) => session.log(msg, opts),
+  });
+  if (allFailed(exploreResults)) {
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed`,
-      { level: "error" },
     );
-    return run;
   }
 
   // Phase 3 — synth: merge into a single answer to the original task.
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
-  const digest = exploreResults
-    .map((r) => `## ${r.spec.agent}\n${(r.output?.text ?? "").trim() || "(no output)"}`)
-    .join("\n\n");
+  const digest = agentDigest(exploreResults, { emptyPlaceholder: "(no output)" });
   const synthSpec = {
     id: "synth",
     agent: "synth",
-    timeoutMs: 120_000,
+    timeoutMs: TIMEOUT_LONG_MS,
     prompt: [
       "You are a synthesis agent. Several independent subagents tackled different parts of a single task.",
       "Merge their outputs into a coherent final answer to the original task.",
@@ -952,20 +773,15 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const t2 = Date.now();
   const [synth] = await spawnAll([synthSpec], { adapter, runHandle: run });
   const phase2Elapsed = Date.now() - t2;
-  await session.log(
-    `ghcp-maestro/${runId}: synth status=${synth.status}${synth.cached ? " (cached)" : ""} took=${synth.finishedAt - synth.startedAt}ms wall=${phase2Elapsed}ms`,
-  );
-  await session.log(
-    `ghcp-maestro/${runId}: FINAL ANSWER ↓\n${(synth.output?.text ?? "(empty)").trim()}`,
-  );
+  await session.log(synthStatusLine(runId, synth, { wallMs: phase2Elapsed }));
+  await session.log(labeledDumpLine(runId, "FINAL ANSWER", synth));
 
   if (synth.status !== "ok") {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: task failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
-      { level: "error" },
     );
-    return run;
   }
 
   await run.complete();
@@ -1035,11 +851,7 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
   if (!descriptor) {
     // When invoked via resume, opts.run was already flipped to "running" by the
     // caller; mark it error so it can't hang forever as a running run.
-    await opts.run?.patchManifest({ status: "error" });
-    await session.log(`ghcp-maestro: saved workflow '${name}' is no longer available`, {
-      level: "error",
-    });
-    return opts.run;
+    return failRun(session, opts.run, `ghcp-maestro: saved workflow '${name}' is no longer available`);
   }
   const run = opts.run ?? (await createRun({ workflow: `saved:${name}`, args }));
   const runId = run.runId;
@@ -1052,11 +864,11 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
   try {
     mod = await loadSavedWorkflow(descriptor.file);
   } catch (err) {
-    await run.patchManifest({ status: "error" });
-    await session.log(`ghcp-maestro/${runId}: failed to load '${name}': ${err?.message ?? err}`, {
-      level: "error",
-    });
-    return run;
+    return failRun(
+      session,
+      run,
+      `ghcp-maestro/${runId}: failed to load '${name}': ${err?.message ?? err}`,
+    );
   }
 
   const api = buildWorkflowApi({
@@ -1073,10 +885,7 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
     await run.complete();
     await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' complete`);
   } catch (err) {
-    await run.patchManifest({ status: "error" });
-    await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
+    await failRun(session, run, `ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`);
   }
   return run;
 }
