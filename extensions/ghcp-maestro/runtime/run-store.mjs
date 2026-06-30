@@ -14,9 +14,10 @@
 // return undefined; corrupt JSON throws.
 
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import {
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -34,6 +35,21 @@ export function defaultBaseDir() {
 /** Generate a new run id: `run-<base36 ms>-<6 char random>`. */
 export function newRunId() {
   return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Reject a runId that could escape the runs/ directory. `openRun` is the
+ * /maestro-resume entry point, so its runId is user-supplied and must never be
+ * joined into a path without this check (path traversal).
+ * @param {string} runId
+ */
+function assertSafeRunId(runId) {
+  if (typeof runId !== "string" || runId.length === 0) {
+    throw new Error("openRun: runId must be a non-empty string");
+  }
+  if (/[/\\]/.test(runId) || runId.includes("..") || runId.includes("\0")) {
+    throw new Error(`openRun: unsafe runId ${JSON.stringify(runId)}`);
+  }
 }
 
 /**
@@ -67,6 +83,7 @@ export async function createRun(opts) {
  * @param {{ baseDir?: string }} [opts]
  */
 export async function openRun(runId, opts = {}) {
+  assertSafeRunId(runId);
   const baseDir = opts.baseDir ?? defaultBaseDir();
   const runDir = join(baseDir, "runs", runId);
   const manifest = await readJson(join(runDir, "manifest.json"));
@@ -169,10 +186,22 @@ function makeHandle(runDir, manifest) {
 // --- IO helpers --------------------------------------------------------------
 
 export async function writeJsonAtomic(filePath, value) {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now().toString(36)}.tmp`;
-  await writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
-  await rename(tmp, filePath);
+  const dir = dirname(filePath);
+  await mkdir(dir, { recursive: true });
+  // Write into an OS-created unique temp directory (mkdtemp is atomic and uses
+  // secure randomness), then atomically rename into place. This avoids any
+  // predictable / hand-rolled temp filename and the symlink race that comes with
+  // it. The temp dir is a sibling of the target so the rename stays on one
+  // filesystem; its ".tmp-" name is never picked up by the run/agent scans
+  // (listRuns reads one level up; listAgents filters for ".json").
+  const tmpDir = await mkdtemp(join(dir, ".tmp-"));
+  const tmp = join(tmpDir, basename(filePath));
+  try {
+    await writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
+    await rename(tmp, filePath);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 export async function readJson(filePath) {

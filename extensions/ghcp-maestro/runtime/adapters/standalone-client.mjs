@@ -12,6 +12,8 @@
 // per adapter instance. We start it lazily (on first invoke) and reuse it
 // across invocations — only sessions are per-spec.
 
+import { extractText } from "./reply-text.mjs";
+
 /**
  * @typedef {import("../spawn.mjs").SubagentAdapter} SubagentAdapter
  * @typedef {import("../spawn.mjs").AgentSpec} AgentSpec
@@ -117,18 +119,6 @@ export function createStandaloneClientAdapter(deps = {}) {
       }
     },
   };
-}
-
-function extractText(assistantEvent) {
-  if (!assistantEvent) return "";
-  const data = assistantEvent.data ?? assistantEvent;
-  if (typeof data?.content === "string") return data.content;
-  if (Array.isArray(data?.content)) {
-    return data.content
-      .map((c) => (typeof c === "string" ? c : c?.text ?? ""))
-      .join("");
-  }
-  return "";
 }
 
 function resolveCliPath() {

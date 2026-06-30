@@ -55,29 +55,19 @@ export async function adversarialReview(findings, opts) {
   const spawnAll = opts.spawnAll ?? defaultSpawnAll;
 
   const items = findings.map((f, i) => normalizeFinding(f, i));
-  // Track the exact spec ids each item owns (keyed by position) so results are
-  // never regrouped by string prefix — `a` and `a-r1` would otherwise collide.
-  // The item index is also folded into the spec id to keep it globally unique
-  // even when two findings normalize to the same slug.
-  const specs = [];
-  const ownSpecIds = items.map(() => new Set());
-  items.forEach((item, itemIdx) => {
-    for (let r = 0; r < reviewers; r += 1) {
-      const specId = `review-${item.index}-${item.id}-r${r}`;
-      specs.push({
-        id: specId,
-        agent: specId,
-        prompt: buildPrompt(item.text, r, item.index),
-      });
-      ownSpecIds[itemIdx].add(specId);
-    }
+  // One spec per (finding, reviewer). The reviewer index `r` keeps spec ids
+  // unique even when two findings normalize to the same slug; fanOutPerItem then
+  // regroups results by exact spec id, never by string prefix.
+  const reviewerIdxs = Array.from({ length: reviewers }, (_, r) => r);
+  const grouped = await fanOutPerItem(items, reviewerIdxs, {
+    specId: (item, _r, rIdx) => `review-${item.index}-${item.id}-r${rIdx}`,
+    buildPrompt: (item, _r, rIdx) => buildPrompt(item.text, rIdx, item.index),
+    forward: forwardOpts(opts),
+    spawnAll,
   });
 
-  const results = await spawnAll(specs, forwardOpts(opts));
-
-  const reviewed = items.map((item, itemIdx) => {
-    const own = results.filter((res) => ownSpecIds[itemIdx].has(res.spec.id));
-    const votes = own.map((res) => {
+  const reviewed = grouped.map(({ item, owned }) => {
+    const votes = owned.map(({ result: res }) => {
       if (res.status !== "ok") return { valid: false, reason: `reviewer ${res.status}` };
       return parseVerdict(textOf(res));
     });
@@ -305,31 +295,19 @@ export async function crossCheck(claims, opts) {
   const spawnAll = opts.spawnAll ?? defaultSpawnAll;
 
   const items = claims.map((c, i) => normalizeFinding(c, i));
-  // As in adversarialReview: own results by exact spec id (not prefix) and map
-  // each result back to its source explicitly, so prefix-sharing or duplicate
-  // claim ids can't cross-contaminate support rates or mislabel sources.
-  const specs = [];
-  const ownSpecIds = items.map(() => new Set());
-  const sourceBySpecId = new Map();
-  items.forEach((item, itemIdx) => {
-    for (const source of sources) {
-      const specId = `check-${item.index}-${item.id}-${slug(source)}`;
-      specs.push({
-        id: specId,
-        agent: specId,
-        prompt: buildPrompt(item.text, source),
-      });
-      ownSpecIds[itemIdx].add(specId);
-      sourceBySpecId.set(specId, source);
-    }
+  // One spec per (claim, source). Folding the source index `sIdx` into the spec
+  // id keeps ids unique even when two sources slugify to the same token (R6);
+  // fanOutPerItem regroups by exact spec id and hands back each source verdict in
+  // order, so prefix-sharing or duplicate ids can't cross-contaminate rates.
+  const grouped = await fanOutPerItem(items, sources, {
+    specId: (item, source, sIdx) => `check-${item.index}-${item.id}-s${sIdx}-${slug(source)}`,
+    buildPrompt: (item, source) => buildPrompt(item.text, source),
+    forward: forwardOpts(opts),
+    spawnAll,
   });
 
-  const results = await spawnAll(specs, forwardOpts(opts));
-
-  const checked = items.map((item, itemIdx) => {
-    const own = results.filter((res) => ownSpecIds[itemIdx].has(res.spec.id));
-    const verdicts = own.map((res) => {
-      const source = sourceBySpecId.get(res.spec.id);
+  const checked = grouped.map(({ item, owned }) => {
+    const verdicts = owned.map(({ variant: source, result: res }) => {
       if (res.status !== "ok") return { source, supported: null };
       return { source, ...parseVerdict(textOf(res)) };
     });
@@ -366,6 +344,47 @@ function defaultSupportParser(text) {
 }
 
 // ── shared helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Shared fan-out used by adversarialReview and crossCheck: expand each item into
+ * one spec per variant, run them all through spawnAll, and return each item with
+ * the results it owns — grouped by exact spec id (never by string prefix) and in
+ * variant order, with the originating variant attached. Both callers previously
+ * rebuilt this specs[]/ownSpecIds[] machinery (and the prefix-collision guard)
+ * by hand.
+ *
+ * @template V
+ * @param {Array<{ id: string, index: number, text: string }>} items
+ * @param {V[]} variants
+ * @param {{
+ *   specId: (item: object, variant: V, variantIdx: number) => string,
+ *   buildPrompt: (item: object, variant: V, variantIdx: number) => string,
+ *   forward: object,
+ *   spawnAll: Function,
+ * }} cfg
+ * @returns {Promise<Array<{ item: object, owned: Array<{ variant: V, variantIdx: number, result: object }> }>>}
+ */
+async function fanOutPerItem(items, variants, { specId, buildPrompt, forward, spawnAll }) {
+  const specs = [];
+  const ownership = items.map(() => []);
+  items.forEach((item, itemIdx) => {
+    variants.forEach((variant, variantIdx) => {
+      const id = specId(item, variant, variantIdx);
+      specs.push({ id, agent: id, prompt: buildPrompt(item, variant, variantIdx) });
+      ownership[itemIdx].push({ id, variant, variantIdx });
+    });
+  });
+  const results = await spawnAll(specs, forward);
+  const byId = new Map(results.map((res) => [res.spec.id, res]));
+  return items.map((item, itemIdx) => ({
+    item,
+    owned: ownership[itemIdx].map(({ id, variant, variantIdx }) => ({
+      variant,
+      variantIdx,
+      result: byId.get(id),
+    })),
+  }));
+}
 
 function requireAdapter(opts, who) {
   if (!opts?.adapter) throw new TypeError(`${who}: opts.adapter is required`);
