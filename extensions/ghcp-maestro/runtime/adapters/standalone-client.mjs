@@ -81,6 +81,8 @@ export function createStandaloneClientAdapter(deps = {}) {
         model: spec.model ?? defaultModel,
       });
 
+      const unsubscribeProgress = subscribeProgress(childSession, ctx?.onProgress);
+
       try {
         if (ctx?.signal?.aborted) {
           throw ctx.signal.reason ?? new Error("aborted");
@@ -95,6 +97,11 @@ export function createStandaloneClientAdapter(deps = {}) {
           text: extractText(reply),
         };
       } finally {
+        try {
+          unsubscribeProgress();
+        } catch {
+          // ignore
+        }
         try {
           await childSession.disconnect?.();
         } catch (err) {
@@ -119,6 +126,55 @@ export function createStandaloneClientAdapter(deps = {}) {
       }
     },
   };
+}
+
+/**
+ * Translate a raw child CopilotSession event into a normalized progress partial,
+ * or null when the event is not progress-relevant.
+ * @param {{ type?: string, data?: any }} event
+ * @returns {{ state: string, bytes?: number, tool?: string, tokens?: number } | null}
+ */
+export function normalizeChildEvent(event) {
+  switch (event?.type) {
+    case "subagent.started":
+    case "subagent.completed":
+    case "subagent.failed":
+    case "assistant.turn_start":
+    case "tool.execution_progress":
+    case "tool.execution_complete":
+      return { state: "running" };
+    case "assistant.streaming_delta":
+      return { state: "streaming", bytes: event.data?.totalResponseSizeBytes };
+    case "tool.execution_start":
+      return { state: "tool", tool: event.data?.toolName };
+    case "assistant.usage": {
+      const tokens = (event.data?.inputTokens ?? 0) + (event.data?.outputTokens ?? 0);
+      return { state: "running", tokens };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Subscribe to a child session's events and forward normalized progress to
+ * `onProgress`. Returns an unsubscribe function. Best-effort: a throwing sink is
+ * swallowed, and a missing session/sink yields a no-op unsubscribe.
+ * @param {{ on?: Function }} session
+ * @param {(partial: object) => void} onProgress
+ * @returns {() => void}
+ */
+export function subscribeProgress(session, onProgress) {
+  if (!onProgress || typeof session?.on !== "function") return () => {};
+  return session.on((event) => {
+    const partial = normalizeChildEvent(event);
+    if (!partial) return;
+    try {
+      onProgress(partial);
+    } catch {
+      // monitoring is best-effort; never disturb the child session
+    }
+  });
 }
 
 function resolveCliPath() {

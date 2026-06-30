@@ -41,6 +41,12 @@ before any of the expensive parallel work starts.
 Every run is saved to disk. `/maestro-resume <runId>` replays it: already
 finished agents are served from cache, only the missing or failed ones rerun.
 
+**Background runs you can watch.**
+`/maestro task|brainstorm|hello|run` kick off in the background, so the session stays
+free while agents fan out. Run `/maestros` to list runs with a live progress
+summary, or `/maestros <runId>` for the full per-agent dashboard. Opt out of
+progress tracking with `GHCP_MAESTRO_NO_MONITOR=1`.
+
 **Brainstorming.**
 `/maestro brainstorm <topic>` fans out several perspective-specific agents in
 parallel, then synthesizes across the perspectives.
@@ -100,9 +106,8 @@ it as its own command (e.g. a deep code review you run on every branch):
 ```
 
 > ghcp-maestro is a GitHub Copilot CLI take on the **orchestrator-workers**
-> pattern — the same idea behind Claude Code's *dynamic workflows*: plan → fan
-> out parallel agents → cross-check → one synthesized answer, with runs persisted
-> so they can be resumed.
+> pattern: plan → fan out parallel agents → cross-check → one synthesized answer,
+> with runs persisted so they can be resumed.
 
 ---
 
@@ -114,7 +119,7 @@ it as its own command (e.g. a deep code review you run on every branch):
 | `/maestro brainstorm <topic>` | Multi-perspective brainstorm → synthesize |
 | `/maestro run <name> [args]` | Run a saved workflow (`args`: JSON object or plain text) |
 | `/maestro workflows` | List the saved workflows available to you |
-| `/maestros` | List recent runs (newest first) |
+| `/maestros [runId]` | List recent runs, or show one run's live dashboard |
 | `/maestro-resume <runId>` | Resume a run; cached agents are skipped |
 | `/maestro-stop <runId>` | Mark a run as stopped |
 | `/maestro help` | List every subcommand |
