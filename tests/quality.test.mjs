@@ -263,3 +263,20 @@ test("crossCheck never cross-contaminates prefix-sharing ids", async () => {
   assert.equal(cx.supportRate, 0);
   assert.deepEqual(c.verdicts.map((v) => v.source), ["s1", "s2"]);
 });
+
+test("crossCheck keeps sources distinct even when they slugify identically (R6)", async () => {
+  // "first principles" and "first-principles" both slugify to "first-principles".
+  // Without a per-source index in the spec id the two specs collide: both
+  // verdicts would be mislabeled with the last source (and one source is lost).
+  const adapter = scripted(() => "SUPPORTED: YES");
+  const { checked } = await crossCheck(["claim"], {
+    adapter,
+    sources: ["first principles", "first-principles"],
+  });
+  assert.equal(checked[0].verdicts.length, 2);
+  assert.deepEqual(
+    checked[0].verdicts.map((v) => v.source),
+    ["first principles", "first-principles"],
+  );
+  assert.equal(checked[0].supportRate, 1);
+});
