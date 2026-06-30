@@ -67,8 +67,13 @@ export async function planApprovalGate(opts = {}) {
   }
   const action = result?.action;
   if (action === "accept") {
-    const chosen = Array.isArray(result?.content?.subtasks) ? result.content.subtasks : [];
-    const selected = all.filter((s) => chosen.includes(s.agent));
+    // Selections come back as stable per-subtask index keys ("0".."n-1"), not
+    // agent names — duplicate agent names would otherwise collapse and approve
+    // every spec that shares a name.
+    const chosen = new Set(
+      Array.isArray(result?.content?.subtasks) ? result.content.subtasks.map(String) : [],
+    );
+    const selected = all.filter((_, i) => chosen.has(String(i)));
     if (selected.length === 0) {
       return { approved: false, selected: [], reason: "empty-selection" };
     }
@@ -84,7 +89,10 @@ function promptPreview(prompt) {
 }
 
 function buildApprovalElicitation(specs) {
-  const names = specs.map((s) => s.agent);
+  // Stable index keys keep duplicate agent names distinct; enumNames carries the
+  // human-readable agent label the host shows next to each checkbox.
+  const keys = specs.map((_, i) => String(i));
+  const labels = specs.map((s) => s.agent);
   return {
     message: `Plan ready: ${specs.length} subtask(s). Select which to run, then Accept (Decline to abort).`,
     requestedSchema: {
@@ -94,8 +102,8 @@ function buildApprovalElicitation(specs) {
           type: "array",
           title: "Subtasks to run",
           description: "Deselect any subtask you want to skip.",
-          items: { type: "string", enum: names },
-          default: names,
+          items: { type: "string", enum: keys, enumNames: labels },
+          default: keys,
         },
       },
       required: ["subtasks"],

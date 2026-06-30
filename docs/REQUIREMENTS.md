@@ -117,7 +117,7 @@ Scripts directly import the adapter (`{ adapter: standalone }`) — no mode flag
   2. The parser validates the schema (3-6 entries, no duplicates, etc.); on failure, retry once with parser-error included
   3. spec array → `spawnAll(standaloneAdapter)` true parallelism
   4. A `synth` agent cross-checks results and produces the final answer
-- Pre-approval UI (subtask list + each prompt preview) deferred to M4.x — currently the raw plan is executed as-is
+- Pre-approval gate (subtask list + each prompt preview) implemented in M4.x — on an interactive host the user approves, runs a subset, or aborts before fan-out; non-interactive hosts auto-approve. See `runtime/plan-approval.mjs`.
 - Saved workflows (M5): `extensions/ghcp-maestro/saved-workflows/<name>.mjs`
 
 ### 4.7 Progress / management
@@ -217,7 +217,7 @@ VS Code β surface (chat participant + TreeView) is Phase 7.
 - **M2.6 — Standalone CopilotClient adapter** ✅ — verified true isolation + parallelism
 - **M3 — State/Resume** ✅ — RunStore persistence, `/maestros`, `/maestro-resume`, `/maestro-stop`, measured crash recovery
 - **M4 — Meta prompt** ✅ — `/maestro task <natural-language>` → plan → explore[N] → synth
-- **M4.x — Plan pre-approval UI** ❌ — `session.ui.elicitation` integration (optional)
+- **M4.x — Plan pre-approval gate** ✅ — `runtime/plan-approval.mjs` integrated; interactive `session.ui.elicitation` with auto-approve fallback, subset selection, and fail-closed behavior
 - **M5 — Saved workflows** ✅ — `runtime/saved-workflows.mjs` scan(project>user>bundled) + `/maestro run <name>` / `/maestro workflows`, sandboxed `api` (`buildWorkflowApi`), bundled `deep-review` example
 - **M6 — Quality helpers** ✅ — `runtime/quality.mjs`: `adversarialReview`, `multiAngle`, `fixLoop`, `crossCheck` (on top of `spawnAll`, adapter-independent, unit tests complete)
 - **M7 — VS Code surface** ❌ — separate `vscode-extension/` package
@@ -247,5 +247,5 @@ Integrated as one plugin on top of GHCP CLI:
 - ✅ **Q4.** Saved workflow slash — dynamic registration decided (planned for implementation in M5)
 - **Q5.** TS → `.mjs` build — currently operating directly with zero-deps plain `.mjs`. If helper libraries grow in M5/M6, reconsider introducing esbuild.
 - ✅ **Q6.** Memory/Resume auxiliary integration — implemented directly (M3 RunStore). No external dependency.
-- **Q7. (new)** Plan pre-approval — whether to show subtask list + each prompt preview through `session.ui.elicitation` (M4.x).
+- ✅ **Q7. (new)** Plan pre-approval — resolved in M4.x: an interactive `session.ui.elicitation` gate shows the subtask list + each prompt preview before fan-out (auto-approves on non-interactive hosts).
 - **Q8. (new)** Saved workflow security — whether to execute `.mjs` shared by others without trust verification, or require permission preview (reflecting M5 brainstorm results).
