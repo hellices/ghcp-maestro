@@ -24,6 +24,22 @@ import { dirname } from "node:path";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
+/** Per-phase subagent timeouts (ms). Named so the intent is explicit and the
+ * values stay consistent across the built-in workflows. */
+const TIMEOUT_PROBE_MS = 30_000;
+const TIMEOUT_AGENT_MS = 60_000;
+const TIMEOUT_EXPLORE_MS = 90_000;
+const TIMEOUT_LONG_MS = 120_000;
+
+/**
+ * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
+ * @param {string | undefined} value
+ * @returns {boolean}
+ */
+function isTruthyEnv(value) {
+  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
+}
+
 /**
  * Saved workflows discovered at startup, keyed by name. Populated before
  * joinSession so they can be exposed via /maestro run and /maestro workflows.
@@ -103,43 +119,43 @@ const MAESTRO_SUBCOMMANDS = [
   {
     name: "task",
     needsArg: "task description",
-    summary: "LLM 이 자연어 task 를 3-6 subtask 로 자동 분할 → 격리된 child Copilot 세션에서 진짜 병렬 실행 → synth 가 cross-check 후 최종 답변",
+    summary: "Decompose a natural-language task into 3-6 subtasks → run each in an isolated child Copilot session in parallel → synth cross-checks them into a final answer.",
     run: (arg) => runTaskWorkflow(session, arg),
   },
   {
     name: "brainstorm",
     needsArg: "topic",
-    summary: "고정 4-각도 (tech/ux/biz/risk) 데모. 각 lens 가 격리된 child session 에서 동시 실행 후 synth 가 TOP 3 actions 도출.",
+    summary: "Fixed 4-lens demo (tech/ux/biz/risk). Each lens runs in an isolated child session in parallel, then synth derives the TOP 3 actions.",
     run: (arg) => runBrainstormWorkflow(session, arg),
   },
   {
     name: "hello",
     needsArg: false,
-    summary: "M2.6 데모 — 3 explore + 1 synth 고정 스크립트, 모두 격리된 child session.",
+    summary: "M2.6 demo — fixed 3 explore + 1 synth script, all isolated child sessions.",
     run: () => runHelloWorkflow(session),
   },
   {
     name: "pong",
     needsArg: "prompt",
-    summary: "단일 격리된 child Copilot session 에 prompt 1번 송신 → 응답 회수 (standalone-client adapter 진단용).",
+    summary: "Send one prompt to a single isolated child Copilot session and collect the reply (standalone-client adapter diagnostic).",
     run: (arg) => runPongProbe(session, arg),
   },
   {
     name: "run",
     needsArg: "name [args]",
-    summary: "저장된 워크플로우 실행 (M5). 예: /maestro run deep-review {\"topic\":\"...\"} — args 는 JSON 또는 평문(=> {input}).",
+    summary: "Run a saved workflow (M5). e.g. /maestro run deep-review {\"topic\":\"...\"} — args are JSON or plain text (=> {input}).",
     run: (arg) => runSavedWorkflowCommand(session, arg),
   },
   {
     name: "workflows",
     needsArg: false,
-    summary: "발견된 저장 워크플로우 목록 (project > user > bundled 우선순위).",
+    summary: "List discovered saved workflows (priority: project > user > bundled).",
     run: () => listSavedWorkflows(session),
   },
   {
     name: "help",
     needsArg: false,
-    summary: "이 도움말.",
+    summary: "This help.",
     run: () => Promise.resolve(),
   },
 ];
@@ -291,7 +307,7 @@ const session = await joinSession({
 });
 
 await session.log(
-  `ghcp-maestro extension loaded (M6 release). Run '/maestro help' for subcommands.${SAVED_WORKFLOWS.size > 0 ? ` ${SAVED_WORKFLOWS.size} saved workflow(s): ${[...SAVED_WORKFLOWS.keys()].join(", ")}.` : ""}`,
+  `ghcp-maestro extension loaded. Run '/maestro help' for subcommands.${SAVED_WORKFLOWS.size > 0 ? ` ${SAVED_WORKFLOWS.size} saved workflow(s): ${[...SAVED_WORKFLOWS.keys()].join(", ")}.` : ""}`,
   {
     ephemeral: true,
   },
@@ -429,21 +445,21 @@ async function runHelloWorkflow(session, opts = {}) {
       prompt:
         "Reply with the single word ALPHA. No punctuation, no explanation.",
       agent: "explore-a",
-      timeoutMs: 60_000,
+      timeoutMs: TIMEOUT_AGENT_MS,
     },
     {
       id: "explore-b",
       prompt:
         "Reply with the single word BRAVO. No punctuation, no explanation.",
       agent: "explore-b",
-      timeoutMs: 60_000,
+      timeoutMs: TIMEOUT_AGENT_MS,
     },
     {
       id: "explore-c",
       prompt:
         "Reply with the single word CHARLIE. No punctuation, no explanation.",
       agent: "explore-c",
-      timeoutMs: 60_000,
+      timeoutMs: TIMEOUT_AGENT_MS,
     },
   ];
   const t1 = Date.now();
@@ -471,7 +487,7 @@ async function runHelloWorkflow(session, opts = {}) {
         id: "synth",
         prompt: `Three explore agents replied below. Join their replies with a single space, in the order they appear, and reply with only that joined string — no punctuation, no explanation.\n\n${collected}`,
         agent: "synth",
-        timeoutMs: 60_000,
+        timeoutMs: TIMEOUT_AGENT_MS,
       },
     ],
     { adapter, runHandle: run },
@@ -513,7 +529,7 @@ async function runEchoProbe(session, prompt) {
   );
   const t0 = Date.now();
   const result = await spawn(
-    { prompt, agent: "echo", id: `${runId}-echo`, timeoutMs: 30_000 },
+    { prompt, agent: "echo", id: `${runId}-echo`, timeoutMs: TIMEOUT_PROBE_MS },
     { adapter },
   );
   const elapsed = Date.now() - t0;
@@ -588,7 +604,7 @@ async function runPongProbe(session, prompt) {
   );
   const t0 = Date.now();
   const result = await spawn(
-    { prompt, agent: "pong", id: `${runId}-pong`, timeoutMs: 60_000 },
+    { prompt, agent: "pong", id: `${runId}-pong`, timeoutMs: TIMEOUT_AGENT_MS },
     { adapter },
   );
   const elapsed = Date.now() - t0;
@@ -667,7 +683,7 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
       "",
       "Reply with 3-5 short bullet points. Be concrete and specific to this topic. No preamble, no 'as an AI', just the bullets.",
     ].join("\n"),
-    timeoutMs: 90_000,
+    timeoutMs: TIMEOUT_EXPLORE_MS,
   }));
 
   const t1 = Date.now();
@@ -727,7 +743,7 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
 
   const t2 = Date.now();
   const [synth] = await spawnAll(
-    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: 120_000 }],
+    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: TIMEOUT_LONG_MS }],
     { adapter, runHandle: run },
   );
   const phase2Elapsed = Date.now() - t2;
@@ -771,15 +787,6 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
  * All three phases share a RunHandle, so any subagent that already succeeded
  * before a crash is replayed from cache on /maestro-resume.
  */
-/**
- * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
- * @param {string | undefined} value
- * @returns {boolean}
- */
-function isTruthyEnv(value) {
-  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
-}
-
 async function runTaskWorkflow(session, task, opts = {}) {
   const run = opts.run ?? (await createRun({ workflow: "task", args: { task } }));
   const runId = run.runId;
@@ -793,7 +800,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const planSpec = {
     id: "plan",
     agent: "plan",
-    timeoutMs: 120_000,
+    timeoutMs: TIMEOUT_LONG_MS,
     prompt: buildPlanPrompt(task),
   };
   const [planResult] = await spawnAll([planSpec], { adapter, runHandle: run });
@@ -823,7 +830,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
     const retrySpec = {
       id: "plan-retry",
       agent: "plan",
-      timeoutMs: 120_000,
+      timeoutMs: TIMEOUT_LONG_MS,
       prompt: buildPlanPrompt(task, err.message, planText),
     };
     const [retryResult] = await spawnAll([retrySpec], { adapter, runHandle: run });
@@ -887,7 +894,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
     id: `explore-${i}-${sanitizeAgentName(s.agent)}`,
     agent: s.agent,
     prompt: s.prompt,
-    timeoutMs: 120_000,
+    timeoutMs: TIMEOUT_LONG_MS,
   }));
   const t1 = Date.now();
   const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
@@ -937,7 +944,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const synthSpec = {
     id: "synth",
     agent: "synth",
-    timeoutMs: 120_000,
+    timeoutMs: TIMEOUT_LONG_MS,
     prompt: [
       "You are a synthesis agent. Several independent subagents tackled different parts of a single task.",
       "Merge their outputs into a coherent final answer to the original task.",
