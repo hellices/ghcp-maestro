@@ -6,6 +6,8 @@ import {
   fanoutFailureSummary,
   allFailed,
   agentDigest,
+  exploreFullDumpLine,
+  logExploreResults,
 } from "../extensions/ghcp-maestro/runtime/workflow-log.mjs";
 
 // A minimal AgentResult-like shape, matching what spawnAll returns.
@@ -81,4 +83,53 @@ test("agentDigest joins per-agent outputs under '## agent' headers", () => {
 test("agentDigest uses a placeholder for empty output", () => {
   const digest = agentDigest([res("tech", "ok", "")], { emptyPlaceholder: "(no output)" });
   assert.equal(digest, "## tech\n(no output)");
+});
+
+test("exploreFullDumpLine dumps the trimmed full output under a FULL header", () => {
+  const line = exploreFullDumpLine("run1", res("tech", "ok", "  full body  "));
+  assert.equal(line, "ghcp-maestro/run1: explore/tech FULL ↓\nfull body");
+});
+
+test("exploreFullDumpLine falls back to (empty) only for null/undefined output", () => {
+  const missing = exploreFullDumpLine("run1", { spec: { agent: "tech" }, output: {} });
+  assert.equal(missing, "ghcp-maestro/run1: explore/tech FULL ↓\n(empty)");
+  // An explicit empty string stays empty (matches the pre-refactor behaviour).
+  const blank = exploreFullDumpLine("run1", res("tech", "ok", ""));
+  assert.equal(blank, "ghcp-maestro/run1: explore/tech FULL ↓\n");
+});
+
+test("logExploreResults emits preview, wall-clock and FULL dump in order (no failures)", async () => {
+  const results = [res("a", "ok", "one"), res("b", "ok", "two")];
+  const calls = [];
+  await logExploreResults({
+    runId: "run1",
+    results,
+    elapsedMs: 1200,
+    count: 2,
+    label: "explore",
+    log: (msg, opts) => calls.push([msg, opts]),
+  });
+  assert.equal(calls.length, 5); // 2 previews + wall-clock + 2 FULL dumps
+  assert.match(calls[0][0], /explore\/a status=ok/);
+  assert.match(calls[1][0], /explore\/b status=ok/);
+  assert.equal(calls[2][0], wallClockLine("run1", 1200, 2));
+  assert.match(calls[3][0], /explore\/a FULL ↓\none/);
+  assert.match(calls[4][0], /explore\/b FULL ↓\ntwo/);
+  for (const [, opts] of calls) assert.equal(opts, undefined);
+});
+
+test("logExploreResults appends a warning-level failure summary when some agents fail", async () => {
+  const results = [res("a", "ok", "one"), res("b", "timeout", "")];
+  const calls = [];
+  await logExploreResults({
+    runId: "run1",
+    results,
+    elapsedMs: 50,
+    count: 2,
+    label: "subtask",
+    log: (msg, opts) => calls.push([msg, opts]),
+  });
+  const last = calls.at(-1);
+  assert.match(last[0], /1\/2 subtask agent\(s\) failed/);
+  assert.deepEqual(last[1], { level: "warning" });
 });
