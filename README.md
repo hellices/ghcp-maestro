@@ -9,7 +9,7 @@ Multi-agent workflow runtime for GitHub Copilot CLI.
 
 > Status: **M6 release ready**. Plan → fan-out (max 16 concurrent, 1000 total)
 > → synth, run persistence + resume, plan parser hardening, saved workflows,
-> multi-agent quality helpers, ESLint + CodeQL CI, 59 단위 테스트.
+> multi-agent quality helpers, plan pre-approval gate, ESLint + CodeQL CI, 77 단위 테스트.
 > 진행 상황은 [docs/PLAN.md](docs/PLAN.md), 스펙은 [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md),
 > 변경 이력은 [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
@@ -50,7 +50,7 @@ In an interactive session started with `--experimental`:
 
 ```
 /maestro help                        # list subcommands
-/maestro task <자연어 task>           # LLM 이 task 를 3-6 subtask 로 자동 분할 → 격리된 child session 들에서 fan-out → synth
+/maestro task <자연어 task>           # LLM 이 task 를 3-6 subtask 로 자동 분할 → (대화형 host면 사전 승인) → 격리된 child session 들에서 fan-out → synth
 /maestro brainstorm <topic>          # 4 lens-specific agents → synth across lenses
 /maestro hello                       # 3 explore + 1 synth, isolated child sessions
 /maestro pong <prompt>               # single-spec standalone-client probe
@@ -79,6 +79,11 @@ $env:GHCP_MAESTRO_PROBE_RESUME     = "<runId>"
 
 copilot --experimental -p "wait 240 seconds then reply DONE" --allow-all-tools
 ```
+
+On an interactive host, `/maestro task` pauses after planning to show the
+subtasks and ask for approval (you can run only a subset or abort). Set
+`GHCP_MAESTRO_AUTO_APPROVE=1` to skip the prompt and always fan out — resume
+replays and non-interactive (`-p` / headless) runs auto-approve anyway.
 
 The long user prompt keeps the host session alive while the env-triggered
 workflow finishes — `-p` mode otherwise SIGTERM-s the extension as soon as
@@ -205,9 +210,9 @@ npm run lint      # ESLint static analysis
 npm run check     # lint + test (what CI runs)
 ```
 
-59 cases as of M6 (concurrency × 7, spawn × 7, run-store × 6, plan parser × 13,
-quality × 15, saved-workflows × 11). CI (`.github/workflows/ci.yml`) runs lint +
-`node --check` + tests on Node 20 and 22; CodeQL runs static security analysis.
+77 cases (concurrency × 7, spawn × 7, run-store × 6, plan parser × 16,
+quality × 19, saved-workflows × 11, plan-approval × 11). CI (`.github/workflows/ci.yml`)
+runs lint + `node --check` + tests on Node 20 and 22; CodeQL runs static security analysis.
 
 The repo *is* the plugin: `copilot plugin install <repo>` copies the whole
 tree into `~/.copilot/installed-plugins/_direct/ghcp-maestro/`. Dev files
