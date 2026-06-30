@@ -7,6 +7,16 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **Real-time in-TUI monitoring (issue #2).** New `runtime/monitor.mjs`
+  aggregates per-agent fan-out progress into a compact dashboard rendered via
+  throttled ephemeral host logs. The standalone adapter now subscribes to each
+  child session's events (`subagent.*`, `tool.execution_*`,
+  `assistant.streaming_delta`, `assistant.usage`) and forwards them through an
+  `onProgress` sink threaded by `spawn`/`spawnAll`. On by default for
+  `task`/`brainstorm`/`hello`; opt out with `GHCP_MAESTRO_NO_MONITOR=1`.
+  Monitoring is best-effort and never affects fan-out results. New unit tests:
+  `tests/monitor.test.mjs`, `tests/spawn-progress.test.mjs`,
+  `tests/standalone-progress.test.mjs`, `tests/monitor-enabled.test.mjs`.
 - **M4.x — plan pre-approval gate.** New `runtime/plan-approval.mjs` adds a
   `planApprovalGate` that runs after the `plan` agent decomposes a task but
   before the fan-out. On an interactive host (`session.capabilities.ui.

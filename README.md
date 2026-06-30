@@ -41,6 +41,11 @@ before any of the expensive parallel work starts.
 Every run is saved to disk. `/maestro-resume <runId>` replays it: already
 finished agents are served from cache, only the missing or failed ones rerun.
 
+**Live progress in the TUI.**
+While a run fans out, ghcp-maestro shows a refreshing dashboard of each agent's
+state and elapsed time right in the session. Opt out with
+`GHCP_MAESTRO_NO_MONITOR=1`.
+
 **Brainstorming.**
 `/maestro brainstorm <topic>` fans out several perspective-specific agents in
 parallel, then synthesizes across the perspectives.
