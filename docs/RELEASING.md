@@ -38,6 +38,12 @@ git archive --format=tar HEAD | tar -t | sort
 
 ## Release steps
 
+The release is automated: pushing a `vX.Y.Z` tag triggers
+`.github/workflows/release.yml`, which re-runs the gate, **verifies** the tag
+matches every version field, the changelog has a matching section, and the
+archive is lean — then creates the GitHub Release from the changelog notes. Your
+job is to get the versions and changelog right, then push the tag.
+
 1. **Land everything on `main`.** All PRs merged, working tree clean, CI green.
 
 2. **Bump the version** in the four files above and **cut the changelog**: move
@@ -45,7 +51,8 @@ git archive --format=tar HEAD | tar -t | sort
    and leave a fresh empty `## [Unreleased]`. Open this as a `release/vX.Y.Z` PR,
    get review, merge.
 
-3. **Verify the gate on `main`:**
+3. **Verify locally before tagging** (the workflow checks the same things, but
+   catch mistakes early):
 
    ```sh
    git checkout main && git pull --ff-only
@@ -53,21 +60,28 @@ git archive --format=tar HEAD | tar -t | sort
    git archive --format=tar HEAD | tar -t | sort   # sanity-check the file list
    ```
 
-4. **Tag and push** (annotated tag, matching `plugin.json`):
+4. **Tag and push.** The annotated tag must match `plugin.json` (`vX.Y.Z`):
 
    ```sh
    git tag -a v0.5.0 -m "ghcp-maestro v0.5.0"
    git push origin v0.5.0
+   ```
+
+   The **Release** workflow then runs and, on success, publishes the GitHub
+   Release automatically. Watch it with `gh run watch` (or in the Actions tab).
+   If a check fails (version mismatch, missing changelog section, a dev-only file
+   leaking into the archive) the release is **not** created — fix it, delete the
+   tag (`git push origin :v0.5.0`), and re-tag.
+
+5. **Grab the SHA** for the community-marketplace submission (optional):
+
+   ```sh
    git rev-list -n 1 v0.5.0      # full 40-char SHA — needed for awesome-copilot
    ```
 
-5. **Create the GitHub Release** (its notes come from the changelog section):
-
-   ```sh
-   gh release create v0.5.0 \
-     --title "v0.5.0" \
-     --notes-file <(sed -n '/## \[0.5.0\]/,/## \[/p' docs/CHANGELOG.md | sed '$d')
-   ```
+> Doing it by hand instead? `gh release create v0.5.0 --title v0.5.0
+> --notes-file <(awk '/^## \[0.5.0\]/{f=1;next}/^## \[/{f=0}f' docs/CHANGELOG.md)`
+> reproduces what the workflow does.
 
 ## Publishing to the marketplace
 
@@ -119,5 +133,6 @@ steps 4–5 come first.
 - [ ] `git archive … | tar -t` shows only the installable files
 - [ ] Repo is **public**
 - [ ] Local install works: `copilot plugin install ./`
-- [ ] Tag + GitHub Release pushed; full SHA recorded
+- [ ] Push tag `v<version>` → **Release** workflow goes green and publishes the
+      GitHub Release
 - [ ] (Optional) `awesome-copilot` submission filed with `ref` + `sha`
