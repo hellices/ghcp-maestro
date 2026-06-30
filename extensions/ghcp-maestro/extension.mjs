@@ -4,8 +4,9 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 import { spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
-import { createMonitor, renderDashboard, renderSummary } from "./runtime/monitor.mjs";
-import { isTruthyEnv, monitorEnabled } from "./runtime/env-flags.mjs";
+import { renderDashboard, renderSummary } from "./runtime/monitor.mjs";
+import { startPhaseMonitor } from "./runtime/phase-monitor.mjs";
+import { isTruthyEnv } from "./runtime/env-flags.mjs";
 import { createRun, openRun, listRuns, readRunProgress, defaultBaseDir } from "./runtime/run-store.mjs";
 import {
   buildPlanPrompt,
@@ -470,15 +471,7 @@ async function runHelloWorkflow(session, opts = {}) {
       timeoutMs: TIMEOUT_AGENT_MS,
     },
   ];
-  const monitor = monitorEnabled(process.env)
-    ? createMonitor({
-        label: `ghcp-maestro/${runId} explore`,
-        render: (_text, snap) => {
-          run.writeProgress(snap).catch(() => {});
-        },
-      })
-    : null;
-  monitor?.seed(exploreSpecs.map((s) => ({ id: s.id, agent: s.agent })));
+  const monitor = startPhaseMonitor({ runId, run, phase: "explore", specs: exploreSpecs });
   const t1 = Date.now();
   const exploreResults = await spawnAll(exploreSpecs, {
     adapter,
@@ -499,17 +492,20 @@ async function runHelloWorkflow(session, opts = {}) {
     .map((r) => `- ${r.spec.agent}: ${(r.output?.text ?? "").trim()}`)
     .join("\n");
   const t2 = Date.now();
-  const [synth] = await spawnAll(
-    [
-      {
-        id: "synth",
-        prompt: `Three explore agents replied below. Join their replies with a single space, in the order they appear, and reply with only that joined string — no punctuation, no explanation.\n\n${collected}`,
-        agent: "synth",
-        timeoutMs: TIMEOUT_AGENT_MS,
-      },
-    ],
-    { adapter, runHandle: run },
-  );
+  const synthSpec = {
+    id: "synth",
+    prompt: `Three explore agents replied below. Join their replies with a single space, in the order they appear, and reply with only that joined string — no punctuation, no explanation.\n\n${collected}`,
+    agent: "synth",
+    timeoutMs: TIMEOUT_AGENT_MS,
+  };
+  const synthMonitor = startPhaseMonitor({ runId, run, phase: "synth", specs: [synthSpec] });
+  const [synth] = await spawnAll([synthSpec], {
+    adapter,
+    runHandle: run,
+    onProgress: synthMonitor ? (e) => synthMonitor.onProgress(e) : undefined,
+  });
+  synthMonitor?.settle(synth.spec.id, synth.status === "ok");
+  synthMonitor?.flush();
   const phase2Elapsed = Date.now() - t2;
   const synthText = (synth.output?.text ?? "").trim();
   await session.log(
@@ -591,15 +587,7 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
     timeoutMs: TIMEOUT_AGENT_MS,
   }));
 
-  const monitor = monitorEnabled(process.env)
-    ? createMonitor({
-        label: `ghcp-maestro/${runId} explore`,
-        render: (_text, snap) => {
-          run.writeProgress(snap).catch(() => {});
-        },
-      })
-    : null;
-  monitor?.seed(specs.map((s) => ({ id: s.id, agent: s.agent })));
+  const monitor = startPhaseMonitor({ runId, run, phase: "explore", specs });
   const t1 = Date.now();
   const results = await spawnAll(specs, {
     adapter,
@@ -641,10 +629,15 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   ].join("\n");
 
   const t2 = Date.now();
-  const [synth] = await spawnAll(
-    [{ id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: TIMEOUT_AGENT_MS }],
-    { adapter, runHandle: run },
-  );
+  const synthSpec = { id: "synth", agent: "synth", prompt: synthPrompt, timeoutMs: TIMEOUT_AGENT_MS };
+  const synthMonitor = startPhaseMonitor({ runId, run, phase: "synth", specs: [synthSpec] });
+  const [synth] = await spawnAll([synthSpec], {
+    adapter,
+    runHandle: run,
+    onProgress: synthMonitor ? (e) => synthMonitor.onProgress(e) : undefined,
+  });
+  synthMonitor?.settle(synth.spec.id, synth.status === "ok");
+  synthMonitor?.flush();
   const phase2Elapsed = Date.now() - t2;
   await session.log(synthStatusLine(runId, synth));
   await session.log(labeledDumpLine(runId, "TOP 3 NEXT STEPS", synth));
@@ -700,7 +693,14 @@ async function runTaskWorkflow(session, task, opts = {}) {
     timeoutMs: TIMEOUT_AGENT_MS,
     prompt: buildPlanPrompt(task),
   };
-  const [planResult] = await spawnAll([planSpec], { adapter, runHandle: run });
+  const planMonitor = startPhaseMonitor({ runId, run, phase: "plan", specs: [planSpec] });
+  const [planResult] = await spawnAll([planSpec], {
+    adapter,
+    runHandle: run,
+    onProgress: planMonitor ? (e) => planMonitor.onProgress(e) : undefined,
+  });
+  planMonitor?.settle(planResult.spec.id, planResult.status === "ok");
+  planMonitor?.flush();
   if (planResult.status !== "ok") {
     return failRun(
       session,
@@ -729,7 +729,14 @@ async function runTaskWorkflow(session, task, opts = {}) {
       timeoutMs: TIMEOUT_AGENT_MS,
       prompt: buildPlanPrompt(task, err.message, planText),
     };
-    const [retryResult] = await spawnAll([retrySpec], { adapter, runHandle: run });
+    const retryMonitor = startPhaseMonitor({ runId, run, phase: "plan", specs: [retrySpec] });
+    const [retryResult] = await spawnAll([retrySpec], {
+      adapter,
+      runHandle: run,
+      onProgress: retryMonitor ? (e) => retryMonitor.onProgress(e) : undefined,
+    });
+    retryMonitor?.settle(retryResult.spec.id, retryResult.status === "ok");
+    retryMonitor?.flush();
     if (retryResult.status !== "ok") {
       return failRun(
         session,
@@ -791,15 +798,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
     prompt: s.prompt,
     timeoutMs: TIMEOUT_AGENT_MS,
   }));
-  const monitor = monitorEnabled(process.env)
-    ? createMonitor({
-        label: `ghcp-maestro/${runId} explore`,
-        render: (_text, snap) => {
-          run.writeProgress(snap).catch(() => {});
-        },
-      })
-    : null;
-  monitor?.seed(exploreSpecs.map((s) => ({ id: s.id, agent: s.agent })));
+  const monitor = startPhaseMonitor({ runId, run, phase: "explore", specs: exploreSpecs });
   const t1 = Date.now();
   const exploreResults = await spawnAll(exploreSpecs, {
     adapter,
@@ -848,7 +847,14 @@ async function runTaskWorkflow(session, task, opts = {}) {
     ].join("\n"),
   };
   const t2 = Date.now();
-  const [synth] = await spawnAll([synthSpec], { adapter, runHandle: run });
+  const synthMonitor = startPhaseMonitor({ runId, run, phase: "synth", specs: [synthSpec] });
+  const [synth] = await spawnAll([synthSpec], {
+    adapter,
+    runHandle: run,
+    onProgress: synthMonitor ? (e) => synthMonitor.onProgress(e) : undefined,
+  });
+  synthMonitor?.settle(synth.spec.id, synth.status === "ok");
+  synthMonitor?.flush();
   const phase2Elapsed = Date.now() - t2;
   await session.log(synthStatusLine(runId, synth, { wallMs: phase2Elapsed }));
   await session.log(labeledDumpLine(runId, "FINAL ANSWER", synth));
