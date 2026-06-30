@@ -7,6 +7,7 @@ import {
   createRun,
   openRun,
   listRuns,
+  readRunProgress,
   readJson,
   writeJsonAtomic,
 } from "../extensions/ghcp-maestro/runtime/run-store.mjs";
@@ -52,6 +53,91 @@ test("writeAgent / readAgent round-trip", async () => {
     const reopened = await openRun(run.runId, { baseDir });
     const again = await reopened.readAgent("alpha");
     assert.equal(again.status, "ok");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("writeProgress / readProgress round-trips a snapshot", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    const snap = {
+      label: "x explore",
+      agents: [],
+      done: 0,
+      total: 2,
+      maxElapsedMs: 0,
+      totalTokens: 0,
+      updatedAt: 123,
+    };
+    await run.writeProgress(snap);
+    assert.deepEqual(await run.readProgress(), snap);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readProgress is undefined before any write", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    assert.equal(await run.readProgress(), undefined);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("writeProgress serializes a fire-and-forget burst; the last-issued snapshot wins", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    // Mirror the monitor's settle×N + flush sink: a burst of un-awaited writes to
+    // the same file, awaiting only the last. The first write carries a large
+    // payload so its atomic rename takes the longest to land; WITHOUT
+    // serialization that stale write would win the race and leave progress.json
+    // on updatedAt:1. Serialization makes issue-order == completion-order, so the
+    // final updatedAt:4 snapshot must win — deterministically, regardless of I/O
+    // timing. (Verified: the unchained impl fails this 10/10; chained passes 10/10.)
+    const big = "x".repeat(8 * 1024 * 1024);
+    run.writeProgress({ done: 0, total: 3, updatedAt: 1, blob: big }).catch(() => {});
+    run.writeProgress({ done: 1, total: 3, updatedAt: 2 }).catch(() => {});
+    run.writeProgress({ done: 2, total: 3, updatedAt: 3 }).catch(() => {});
+    await run.writeProgress({ done: 3, total: 3, updatedAt: 4 });
+    const got = await run.readProgress();
+    assert.equal(got.done, 3);
+    assert.equal(got.updatedAt, 4);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readRunProgress reads a run's progress by id", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    await run.writeProgress({ done: 1, total: 3 });
+    const got = await readRunProgress(run.runId, { baseDir });
+    assert.equal(got.done, 1);
+    assert.equal(got.total, 3);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readRunProgress is undefined for an unknown run", async () => {
+  const baseDir = await freshBase();
+  try {
+    assert.equal(await readRunProgress("run-does-not-exist", { baseDir }), undefined);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readRunProgress rejects an unsafe runId", async () => {
+  const baseDir = await freshBase();
+  try {
+    await assert.rejects(() => readRunProgress("../escape", { baseDir }));
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "author": { "name": "ghcp-maestro contributors" },
   "license": "MIT",
-  "keywords": ["workflow", "subagent", "orchestration", "dynamic-workflow"],
+  "keywords": ["workflow", "subagent", "orchestration", "multi-agent"],
   "repository": { "type": "git", "url": "https://github.com/hellices/ghcp-maestro" },
   "extensions": ["./extensions"]
 }

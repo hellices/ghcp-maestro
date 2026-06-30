@@ -40,6 +40,12 @@
 모든 run 은 디스크에 저장된다. `/maestro-resume <runId>` 로 다시 실행하면 이미
 끝난 에이전트는 캐시에서 가져오고, 누락되거나 실패한 것만 다시 돌린다.
 
+**백그라운드 실행과 모니터링.**
+`/maestro task|brainstorm|hello|run` 는 백그라운드로 시작돼, 에이전트가 fan-out 되는
+동안 세션은 계속 자유롭다. `/maestros` 로 실행 목록과 진행 요약을, `/maestros
+<runId>` 로 에이전트별 상세 대시보드를 본다. `GHCP_MAESTRO_NO_MONITOR=1` 로 진행
+추적을 끌 수 있다.
+
 **브레인스토밍.**
 `/maestro brainstorm <주제>` 는 여러 관점의 에이전트를 병렬로 펼친 뒤, 관점을
 가로질러 종합한다.
@@ -93,9 +99,8 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 ```
 
 > ghcp-maestro 는 **orchestrator-workers** 패턴을 GitHub Copilot CLI 로 구현한
-> 것이다 — 주요 agent CLI 의 *dynamic workflows* 와 같은 아이디어: 분해 → 병렬
-> 에이전트 fan-out → 교차 검증 → 하나의 종합 답변, 그리고 run 을 영속화해 재실행
-> 가능.
+> 것이다 — 분해 → 병렬 에이전트 fan-out → 교차 검증 → 하나의 종합 답변, 그리고
+> run 을 영속화해 재실행 가능.
 
 ---
 
@@ -107,7 +112,7 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 | `/maestro brainstorm <주제>` | 다관점 브레인스토밍 → 종합 |
 | `/maestro run <이름> [인자]` | 저장된 워크플로우 실행 (`인자`: JSON 객체 또는 평문) |
 | `/maestro workflows` | 사용 가능한 저장 워크플로우 목록 |
-| `/maestros` | 최근 run 목록 (최신순) |
+| `/maestros [runId]` | 최근 run 목록, 또는 한 run 의 실시간 대시보드 |
 | `/maestro-resume <runId>` | run 재실행; 캐시된 에이전트는 건너뜀 |
 | `/maestro-stop <runId>` | run 을 중지로 표시 |
 | `/maestro help` | 전체 하위 명령 보기 |
