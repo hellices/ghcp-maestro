@@ -1,0 +1,61 @@
+{
+  "name": "ghcp-maestro-vscode",
+  "displayName": "ghcp-maestro",
+  "description": "Multi-agent workflow runtime for VS Code — /maestro chat participant with a TUI-like run console and per-agent drill-down. Shares the ghcp-maestro runtime core.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.94.0",
+    "node": ">=20"
+  },
+  "categories": ["AI", "Chat", "Other"],
+  "main": "./extension.mjs",
+  "activationEvents": [],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "ghcp-maestro.workflow",
+        "name": "maestro",
+        "fullName": "ghcp-maestro",
+        "description": "Decompose a task, fan out isolated agents in parallel, watch them in the Maestro views.",
+        "isSticky": true,
+        "commands": [
+          { "name": "task", "description": "Decompose a natural-language task and fan out subtasks" },
+          { "name": "brainstorm", "description": "Brainstorm a topic from multiple lenses in parallel" },
+          { "name": "run", "description": "Run a saved workflow by name" },
+          { "name": "workflows", "description": "List discovered saved workflows" }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "maestro",
+          "title": "Maestro",
+          "icon": "media/maestro.svg"
+        }
+      ]
+    },
+    "views": {
+      "maestro": [
+        {
+          "id": "maestroRuns",
+          "name": "Runs",
+          "contextualTitle": "Maestro"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ghcp-maestro.openConsole",
+        "title": "Maestro: Open Run Console"
+      },
+      {
+        "command": "ghcp-maestro.retryAgent",
+        "title": "Maestro: Retry Agent"
+      }
+    ]
+  }
+}

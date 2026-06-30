@@ -32,7 +32,7 @@
  * Drives workflow runs. Implemented by each surface over the shared runtime.
  *
  * @typedef {Object} RuntimePort
- * @property {(input: MaestroCommandInput) => Promise<unknown>} runCommand
+ * @property {(input: MaestroCommandInput, ctx?: { logPort?: LogPort, uiSink?: UiSinkPort, cancellation?: CancellationPort }) => Promise<unknown>} runCommand
  * @property {(runId: string) => Promise<void>} resumeRun
  * @property {(runId: string) => Promise<void>} stopRun
  */
