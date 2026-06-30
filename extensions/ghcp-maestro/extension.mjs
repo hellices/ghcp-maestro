@@ -12,6 +12,7 @@ import {
   sanitizeAgentName,
 } from "./runtime/plan.mjs";
 import { planApprovalGate } from "./runtime/plan-approval.mjs";
+import { failRun } from "./runtime/run-flow.mjs";
 import {
   exploreResultLine,
   wallClockLine,
@@ -281,10 +282,7 @@ const session = await joinSession({
         try {
           await wf(session, run.manifest.args, { run });
         } catch (err) {
-          await run.patchManifest({ status: "error" });
-          await session.log(`ghcp-maestro: resume failed: ${err?.message ?? err}`, {
-            level: "error",
-          });
+          await failRun(session, run, `ghcp-maestro: resume failed: ${err?.message ?? err}`);
         }
       },
     },
@@ -417,10 +415,7 @@ if (envResume && envResume.trim().length > 0) {
     } catch (err) {
       // The run was already flipped to "running"; ensure a failure transitions
       // it to a terminal "error" rather than hanging forever in /maestros.
-      await run?.patchManifest({ status: "error" });
-      await session.log(`ghcp-maestro: env resume probe failed: ${err?.message ?? err}`, {
-        level: "error",
-      });
+      await failRun(session, run, `ghcp-maestro: env resume probe failed: ${err?.message ?? err}`);
     }
   })();
 }
@@ -701,12 +696,11 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
     log: (msg, opts) => session.log(msg, opts),
   });
   if (allFailed(results)) {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: brainstorm aborted — all ${results.length} explore agents failed`,
-      { level: "error" },
     );
-    return run;
   }
 
   // Phase 2 — synth
@@ -737,12 +731,11 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   );
 
   if (synth.status !== "ok") {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: brainstorm failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
-      { level: "error" },
     );
-    return run;
   }
 
   await run.complete();
@@ -787,12 +780,11 @@ async function runTaskWorkflow(session, task, opts = {}) {
   };
   const [planResult] = await spawnAll([planSpec], { adapter, runHandle: run });
   if (planResult.status !== "ok") {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: plan agent ${planResult.status}: ${planResult.error ?? "(no error)"}`,
-      { level: "error" },
     );
-    return run;
   }
   const planText = (planResult.output?.text ?? "").trim();
   await session.log(
@@ -817,21 +809,20 @@ async function runTaskWorkflow(session, task, opts = {}) {
     };
     const [retryResult] = await spawnAll([retrySpec], { adapter, runHandle: run });
     if (retryResult.status !== "ok") {
-      await run.patchManifest({ status: "error" });
-      await session.log(
+      return failRun(
+        session,
+        run,
         `ghcp-maestro/${runId}: plan retry ${retryResult.status}: ${retryResult.error ?? "(no error)"}`,
-        { level: "error" },
       );
-      return run;
     }
     try {
       specs = parseAndValidatePlan((retryResult.output?.text ?? "").trim());
     } catch (err2) {
-      await run.patchManifest({ status: "error" });
-      await session.log(`ghcp-maestro/${runId}: plan retry also unparseable: ${err2.message}`, {
-        level: "error",
-      });
-      return run;
+      return failRun(
+        session,
+        run,
+        `ghcp-maestro/${runId}: plan retry also unparseable: ${err2.message}`,
+      );
     }
   }
 
@@ -890,12 +881,11 @@ async function runTaskWorkflow(session, task, opts = {}) {
     log: (msg, opts) => session.log(msg, opts),
   });
   if (allFailed(exploreResults)) {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed`,
-      { level: "error" },
     );
-    return run;
   }
 
   // Phase 3 — synth: merge into a single answer to the original task.
@@ -927,12 +917,11 @@ async function runTaskWorkflow(session, task, opts = {}) {
   );
 
   if (synth.status !== "ok") {
-    await run.patchManifest({ status: "error" });
-    await session.log(
+    return failRun(
+      session,
+      run,
       `ghcp-maestro/${runId}: task failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
-      { level: "error" },
     );
-    return run;
   }
 
   await run.complete();
@@ -1002,11 +991,7 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
   if (!descriptor) {
     // When invoked via resume, opts.run was already flipped to "running" by the
     // caller; mark it error so it can't hang forever as a running run.
-    await opts.run?.patchManifest({ status: "error" });
-    await session.log(`ghcp-maestro: saved workflow '${name}' is no longer available`, {
-      level: "error",
-    });
-    return opts.run;
+    return failRun(session, opts.run, `ghcp-maestro: saved workflow '${name}' is no longer available`);
   }
   const run = opts.run ?? (await createRun({ workflow: `saved:${name}`, args }));
   const runId = run.runId;
@@ -1019,11 +1004,11 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
   try {
     mod = await loadSavedWorkflow(descriptor.file);
   } catch (err) {
-    await run.patchManifest({ status: "error" });
-    await session.log(`ghcp-maestro/${runId}: failed to load '${name}': ${err?.message ?? err}`, {
-      level: "error",
-    });
-    return run;
+    return failRun(
+      session,
+      run,
+      `ghcp-maestro/${runId}: failed to load '${name}': ${err?.message ?? err}`,
+    );
   }
 
   const api = buildWorkflowApi({
@@ -1040,10 +1025,7 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
     await run.complete();
     await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' complete`);
   } catch (err) {
-    await run.patchManifest({ status: "error" });
-    await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`, {
-      level: "error",
-    });
+    await failRun(session, run, `ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`);
   }
   return run;
 }
