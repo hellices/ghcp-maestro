@@ -13,6 +13,13 @@ import {
 } from "./runtime/plan.mjs";
 import { planApprovalGate } from "./runtime/plan-approval.mjs";
 import {
+  exploreResultLine,
+  wallClockLine,
+  fanoutFailureSummary,
+  allFailed,
+  agentDigest,
+} from "./runtime/workflow-log.mjs";
+import {
   defaultWorkflowDirs,
   scanSavedWorkflows,
   loadSavedWorkflow,
@@ -466,14 +473,9 @@ async function runHelloWorkflow(session, opts = {}) {
   const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
   for (const r of exploreResults) {
-    const preview = (r.output?.text ?? "").trim().slice(0, 40);
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} status=${r.status}${r.cached ? " (cached)" : ""} took=${r.finishedAt - r.startedAt}ms reply=${JSON.stringify(preview)}`,
-    );
+    await session.log(exploreResultLine(runId, r, { mode: "reply" }));
   }
-  await session.log(
-    `ghcp-maestro/${runId}: phase=explore wall-clock=${phase1Elapsed}ms (parallel of 3)`,
-  );
+  await session.log(wallClockLine(runId, phase1Elapsed, 3));
 
   // Phase 2 — synth (uses outputs from phase 1)
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
@@ -691,15 +693,9 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   const phase1Elapsed = Date.now() - t1;
 
   for (const r of results) {
-    const text = (r.output?.text ?? "").trim();
-    const firstLine = text.split("\n")[0] ?? "";
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} status=${r.status}${r.cached ? " (cached)" : ""} took=${r.finishedAt - r.startedAt}ms chars=${text.length} preview=${JSON.stringify(firstLine.slice(0, 100))}`,
-    );
+    await session.log(exploreResultLine(runId, r, { mode: "preview" }));
   }
-  await session.log(
-    `ghcp-maestro/${runId}: phase=explore wall-clock=${phase1Elapsed}ms (parallel of ${angles.length})`,
-  );
+  await session.log(wallClockLine(runId, phase1Elapsed, angles.length));
 
   for (const r of results) {
     await session.log(
@@ -709,14 +705,11 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
 
   // spawnAll reports per-agent failure in-band (status !== "ok"). Surface those
   // and refuse to persist a successful run when there is nothing to synthesise.
-  const failedExplore = results.filter((r) => r.status !== "ok");
-  if (failedExplore.length > 0) {
-    await session.log(
-      `ghcp-maestro/${runId}: ${failedExplore.length}/${results.length} explore agent(s) failed: ${failedExplore.map((r) => `${r.spec.agent}=${r.status}`).join(", ")}`,
-      { level: "warning" },
-    );
+  const failureSummary = fanoutFailureSummary(runId, results, "explore");
+  if (failureSummary) {
+    await session.log(failureSummary, { level: "warning" });
   }
-  if (results.every((r) => r.status !== "ok")) {
+  if (allFailed(results)) {
     await run.patchManifest({ status: "error" });
     await session.log(
       `ghcp-maestro/${runId}: brainstorm aborted — all ${results.length} explore agents failed`,
@@ -727,9 +720,7 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
 
   // Phase 2 — synth
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
-  const digest = results
-    .map((r) => `## ${r.spec.agent}\n${(r.output?.text ?? "").trim()}`)
-    .join("\n\n");
+  const digest = agentDigest(results);
   const synthPrompt = [
     `You are a synthesis agent. Four independent agents brainstormed the topic from different lenses. Pick the strongest 3 actionable next steps that survive cross-checking across lenses.`,
     "",
@@ -900,15 +891,9 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
   for (const r of exploreResults) {
-    const text = (r.output?.text ?? "").trim();
-    const firstLine = text.split("\n")[0] ?? "";
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} status=${r.status}${r.cached ? " (cached)" : ""} took=${r.finishedAt - r.startedAt}ms chars=${text.length} preview=${JSON.stringify(firstLine.slice(0, 100))}`,
-    );
+    await session.log(exploreResultLine(runId, r, { mode: "preview" }));
   }
-  await session.log(
-    `ghcp-maestro/${runId}: phase=explore wall-clock=${phase1Elapsed}ms (parallel of ${specs.length})`,
-  );
+  await session.log(wallClockLine(runId, phase1Elapsed, specs.length));
 
   // Optional: dump the full per-subtask outputs into the session log so the
   // human can inspect them alongside the final synth.
@@ -920,14 +905,11 @@ async function runTaskWorkflow(session, task, opts = {}) {
 
   // spawnAll reports per-agent failure in-band. Surface failures and don't
   // synthesise (or persist success) when every subtask failed.
-  const failedExplore = exploreResults.filter((r) => r.status !== "ok");
-  if (failedExplore.length > 0) {
-    await session.log(
-      `ghcp-maestro/${runId}: ${failedExplore.length}/${exploreResults.length} subtask agent(s) failed: ${failedExplore.map((r) => `${r.spec.agent}=${r.status}`).join(", ")}`,
-      { level: "warning" },
-    );
+  const failureSummary = fanoutFailureSummary(runId, exploreResults, "subtask");
+  if (failureSummary) {
+    await session.log(failureSummary, { level: "warning" });
   }
-  if (exploreResults.every((r) => r.status !== "ok")) {
+  if (allFailed(exploreResults)) {
     await run.patchManifest({ status: "error" });
     await session.log(
       `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed`,
@@ -938,9 +920,7 @@ async function runTaskWorkflow(session, task, opts = {}) {
 
   // Phase 3 — synth: merge into a single answer to the original task.
   await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
-  const digest = exploreResults
-    .map((r) => `## ${r.spec.agent}\n${(r.output?.text ?? "").trim() || "(no output)"}`)
-    .join("\n\n");
+  const digest = agentDigest(exploreResults, { emptyPlaceholder: "(no output)" });
   const synthSpec = {
     id: "synth",
     agent: "synth",
