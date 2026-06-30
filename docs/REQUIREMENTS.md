@@ -220,10 +220,11 @@ VS Code β surface (chat participant + TreeView) 는 Phase 7.
 - **M3 — 상태/Resume** ✅ — RunStore 영속화, `/maestros`, `/maestro-resume`, `/maestro-stop`, crash recovery 실측
 - **M4 — 메타 프롬프트** ✅ — `/maestro task <자연어>` → plan → explore[N] → synth
 - **M4.x — Plan 사전 승인 UI** ❌ — `session.ui.elicitation` 통합 (선택)
-- **M5 — 저장된 워크플로우** ❌ — `saved-workflows/<name>.mjs` 동적 슬래시 + `args`
-- **M6 — 품질 helper** ❌ — `adversarialReview`, `multiAngle`, `fixLoop`, `crossCheck`
+- **M5 — 저장된 워크플로우** ✅ — `runtime/saved-workflows.mjs` 스캔(project>user>bundled) + `/maestro run <name>` / `/maestro workflows`, sandboxed `api` (`buildWorkflowApi`), bundled `deep-review` 예제
+- **M6 — 품질 helper** ✅ — `runtime/quality.mjs`: `adversarialReview`, `multiAngle`, `fixLoop`, `crossCheck` (`spawnAll` 위, adapter 비종속, 단위 테스트 완비)
 - **M7 — VS Code surface** ❌ — 별도 `vscode-extension/` 패키지
 - **M8 — Standalone SDK fan-out** ✅ (M2.6 에서 선행 완료)
+- **CI / 정적분석** ✅ — ESLint flat config + `.github/workflows/ci.yml` (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`
 
 자세한 산출물 / 실측 / acceptance 는 [PLAN.md](PLAN.md) 참고.
 
