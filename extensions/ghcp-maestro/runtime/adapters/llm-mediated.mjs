@@ -13,8 +13,7 @@
 //     parse structured replies.
 //   - This adapter does NOT spawn isolated child agent contexts. The reply
 //     comes from the same model/session as the user's chat. For true
-//     isolation use the `agent-registry` or `standalone-client` adapter
-//     (planned for later milestones).
+//     isolation use the `standalone-client` adapter.
 //
 // @experimental Real-world LLM behavior may produce non-deterministic
 // formatting; consumers should treat `output.text` as opaque.

@@ -3,11 +3,10 @@
 // The workflow runtime never calls the Copilot SDK directly. Instead it
 // goes through an "adapter" that implements the SubagentAdapter interface.
 //
-// M2 ships the `dummy` adapter (instant, deterministic, in-process) so the
-// concurrency, error, and timeout semantics can be validated without
-// burning model tokens. Real adapters (LLM-mediated via session.sendAndWait,
-// or fork-based via session.rpc.agentRegistry.spawn) arrive in later
-// milestones.
+// A `dummy` adapter (instant, deterministic, in-process) lets the concurrency,
+// error, and timeout semantics be validated without burning model tokens. The
+// production adapter is `standalone-client` (one isolated child Copilot session
+// per spec); `llm-mediated` is retained as a host-session probe only.
 
 import { runWithConcurrency } from "./concurrency.mjs";
 
