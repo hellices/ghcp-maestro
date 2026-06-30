@@ -11,6 +11,7 @@ import {
   parseAndValidatePlan,
   sanitizeAgentName,
 } from "./runtime/plan.mjs";
+import { planApprovalGate } from "./runtime/plan-approval.mjs";
 import {
   defaultWorkflowDirs,
   scanSavedWorkflows,
@@ -770,6 +771,15 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
  * All three phases share a RunHandle, so any subagent that already succeeded
  * before a crash is replayed from cache on /maestro-resume.
  */
+/**
+ * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
+ * @param {string | undefined} value
+ * @returns {boolean}
+ */
+function isTruthyEnv(value) {
+  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
+}
+
 async function runTaskWorkflow(session, task, opts = {}) {
   const run = opts.run ?? (await createRun({ workflow: "task", args: { task } }));
   const runId = run.runId;
@@ -839,6 +849,37 @@ async function runTaskWorkflow(session, task, opts = {}) {
   await session.log(
     `ghcp-maestro/${runId}: plan produced ${specs.length} subtask(s): ${specs.map((s) => s.agent).join(", ")}`,
   );
+
+  // M4.x — pre-approval gate. On an interactive host, let the user review the
+  // subtasks and approve (or drop a subset / abort) before the expensive
+  // fan-out. Non-interactive hosts, resume replays, and an explicit
+  // GHCP_MAESTRO_AUTO_APPROVE bypass approve everything automatically.
+  const autoApprove =
+    opts.autoApprove === true ||
+    isTruthyEnv(process.env.GHCP_MAESTRO_AUTO_APPROVE) ||
+    Boolean(opts.run);
+  const gateUi = session.capabilities?.ui?.elicitation ? session.ui : null;
+  const gate = await planApprovalGate({
+    specs,
+    ui: gateUi,
+    capabilities: session.capabilities,
+    autoApprove,
+    log: (msg, options) => session.log(`ghcp-maestro/${runId}: ${msg}`, options),
+  });
+  if (!gate.approved) {
+    await run.patchManifest({ status: "stopped" });
+    await session.log(
+      `ghcp-maestro/${runId}: task ${gate.reason === "empty-selection" ? "aborted (no subtasks selected)" : `cancelled by user (${gate.reason})`} — fan-out skipped`,
+      { level: "warning" },
+    );
+    return run;
+  }
+  if (gate.selected.length !== specs.length) {
+    await session.log(
+      `ghcp-maestro/${runId}: user approved ${gate.selected.length}/${specs.length} subtask(s): ${gate.selected.map((s) => s.agent).join(", ")}`,
+    );
+    specs = gate.selected;
+  }
 
   // Phase 2 — explore: fan out the planned specs.
   await session.log(`ghcp-maestro/${runId}: phase=explore agents=${specs.length} (parallel)`);

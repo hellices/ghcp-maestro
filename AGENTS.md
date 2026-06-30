@@ -1,63 +1,85 @@
 # AGENTS.md — ghcp-maestro
 
-이 레포 작업 시 GHCP CLI / VS Code Copilot Chat 공통 가이드.
-스펙은 [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), 실행 단계는 [docs/PLAN.md](docs/PLAN.md).
+Shared guide for working in this repo from the GHCP CLI / VS Code Copilot Chat.
+Spec: [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); execution steps:
+[docs/PLAN.md](docs/PLAN.md).
 
 ---
 
-## 프로젝트 한 줄
+## Project in one line
 
-GitHub Copilot CLI multi-agent workflow runtime. 자연어 task 자동 분할 + 격리된 child Copilot 세션 fan-out + 영속화/resume 통합 plugin.
-메인 surface: `extensions/ghcp-maestro/extension.mjs` (`@github/copilot-sdk/extension` `joinSession`).
-플러그인 manifest: `plugin.json` (repo root).
+A GitHub Copilot CLI multi-agent workflow runtime. A single plugin that
+auto-decomposes a natural-language task, fans out isolated child Copilot
+sessions, and adds persistence/resume.
+Main surface: `extensions/ghcp-maestro/extension.mjs` (`@github/copilot-sdk/extension`
+`joinSession`).
+Plugin manifest: `plugin.json` (repo root).
 
-## 절대 규칙
+## Hard rules
 
-- 런타임 출력은 `session.log()` 만 — `console.*` / stdout 직접 금지 (JSON-RPC 깨짐)
-- ESM only — extension `package.json` `"type": "module"`, 산출물 `.mjs`
-- Slash command prefix `maestro` (예: `/maestro`, `/maestros`, `/maestro-resume`); Tool name prefix `ghcp_maestro_*`
-- 스크립트(워크플로우)는 inject된 글로벌 API만 사용 — FS / shell 직접 호출 금지
-- 동시성 글로벌 cap 1000 agent/run, 기본 16
-- 새 의존성 추가 전 zero-deps 가능 여부 먼저 확인
-- 사용자에게 안내 시 `copilot --experimental` 필요함을 명시 (EXTENSIONS feature flag = experimental)
+- Runtime output goes through `session.log()` only — never `console.*` or direct
+  stdout (it breaks JSON-RPC).
+- ESM only — the extension `package.json` sets `"type": "module"`; build artifacts
+  are `.mjs`.
+- Slash command prefix `maestro` (e.g. `/maestro`, `/maestros`, `/maestro-resume`);
+  tool name prefix `ghcp_maestro_*`.
+- Workflow scripts use only the injected global API — no direct FS / shell calls.
+- Concurrency: global cap 1000 agents/run, default 16.
+- Before adding a new dependency, check whether it can be done zero-deps first.
+- When guiding users, state that `copilot --experimental` is required (the
+  EXTENSIONS feature flag is experimental).
 
-## 워크플로우 (단계별 권장 skill)
+## Workflow (recommended skill per step)
 
-새 작업 시작 시 아래 순서로 skill 호출.
+When starting new work, invoke skills in this order.
 
-1. 스펙 분석 / 설계 → `brainstorming`
-2. 계획 작성 → `writing-plans` (`PLAN.md` 패턴 따름)
-3. 다중 독립 조사 / 구현 → `dispatching-parallel-agents` 또는 `subagent-driven-development`
-4. 계획 실행 → `executing-plans`
-5. 구현 전 테스트 → `test-driven-development`
-6. 버그 / 예상 외 동작 → `systematic-debugging` (가설 → 추측 금지)
-7. 완료 주장 전 → `verification-before-completion` (테스트/빌드 실제 통과 확인)
-8. 머지 / PR 직전 → `requesting-code-review` → 피드백 받으면 `receiving-code-review`
-9. 브랜치 마무리 → `finishing-a-development-branch`
+1. Spec analysis / design → `brainstorming`
+2. Write a plan → `writing-plans` (follow the `PLAN.md` pattern)
+3. Multiple independent investigation / implementation →
+   `dispatching-parallel-agents` or `subagent-driven-development`
+4. Execute the plan → `executing-plans`
+5. Tests before implementation → `test-driven-development`
+6. Bugs / unexpected behavior → `systematic-debugging` (hypotheses, not guesses)
+7. Before claiming completion → `verification-before-completion` (confirm tests/
+   build actually pass)
+8. Just before merge / PR → `requesting-code-review` → on feedback,
+   `receiving-code-review`
+9. Wrapping up a branch → `finishing-a-development-branch`
 
-## 도메인별 참조 skill
+## Domain reference skills
 
-- `@github/copilot-sdk` (`joinSession`, `session.*`, `customAgents`, hooks, tools) → `copilot-sdk`
-- 메타 프롬프트 (M4) 안전성 검토 → `ai-prompt-engineering-safety-review`
-- 새 skill 작성 시 → `writing-skills`
+- `@github/copilot-sdk` (`joinSession`, `session.*`, `customAgents`, hooks, tools)
+  → `copilot-sdk`
+- Meta-prompt (M4) safety review → `ai-prompt-engineering-safety-review`
+- Writing a new skill → `writing-skills`
 
-## 한국어 응답 스타일
+## In-session response style
 
-세션 내 한국어 응답은 짧고 명사형 중심. 불필요한 조사/번역체 금지.
-긴 산문 필요한 경우만 예외 (커밋 메시지 본문, 릴리스 노트 등).
+In-session Korean responses should be short and noun-centric. Avoid unnecessary
+particles and translationese. Prose is the exception only where it is genuinely
+needed (commit message bodies, release notes, etc.).
 
-## 환경 메모
+## Environment notes
 
-- Node.js 20+, Windows PowerShell 5.1 환경
+- Node.js 20+; Windows PowerShell 5.1 environment.
 
-## 현 단계
+## Current status
 
-Phase 6 / **M6 release** 완료. M4 task workflow (plan → fan-out[N] → synth) 위에 다음 추가:
-- **M5 saved workflows** — `runtime/saved-workflows.mjs` 스캔(project>user>bundled) + `/maestro run <name>` / `/maestro workflows`, sandboxed `api` (`buildWorkflowApi`), bundled `deep-review` 예제.
-- **M6 quality helpers** — `runtime/quality.mjs`: `adversarialReview` / `multiAngle` / `fixLoop` / `crossCheck` (`spawnAll` 위, adapter 비종속).
-- **plan 로직 분리** — `runtime/plan.mjs` (importable, 순수 함수).
-- **CI / 정적분석** — ESLint flat config + `.github/workflows/ci.yml` (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 59 단위 테스트.
+Phase 6 / **M6 release** plus **M4.x** are done. On top of the M4 task workflow
+(plan → fan-out[N] → synth):
+- **M5 saved workflows** — `runtime/saved-workflows.mjs` discovery
+  (project > user > bundled) + `/maestro run <name>` / `/maestro workflows`,
+  sandboxed `api` (`buildWorkflowApi`), bundled `deep-review` example.
+- **M6 quality helpers** — `runtime/quality.mjs`: `adversarialReview` /
+  `multiAngle` / `fixLoop` / `crossCheck` (on top of `spawnAll`, adapter-agnostic).
+- **M4.x plan pre-approval gate** — `runtime/plan-approval.mjs`: review the
+  decomposed subtasks and approve / subset / abort before fan-out, gated on
+  `session.capabilities.ui.elicitation` with auto-approve fallbacks.
+- **Plan logic extracted** — `runtime/plan.mjs` (importable, pure functions).
+- **CI / static analysis** — ESLint flat config + `.github/workflows/ci.yml`
+  (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 77 unit tests.
 
-런타임은 여전히 zero-deps (eslint 등은 devDependencies 한정).
+The runtime is still zero-deps (eslint and friends are devDependencies only).
 
-다음은 (선택) M4.x plan 사전 승인 UI, M7 VS Code surface.
+Next: (optional) M7 VS Code surface, and real-time in-TUI run monitoring (tracked
+as a separate issue).
