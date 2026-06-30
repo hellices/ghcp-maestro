@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderMaestroHelp } from "../extensions/ghcp-maestro/runtime/help.mjs";
+import { renderMaestroHelp, DIAGNOSTICS_HEADER } from "../extensions/ghcp-maestro/runtime/help.mjs";
 
 const SUBCOMMANDS = [
   { name: "task", needsArg: "task description", summary: "Decompose a task." },
@@ -22,15 +22,15 @@ test("help lists every non-hidden subcommand with its usage and summary", () => 
 
 test("help hides subcommands flagged hidden from the main list", () => {
   const out = renderMaestroHelp(SUBCOMMANDS, { savedWorkflows: [] });
-  const mainSection = out.split("Diagnostics")[0];
+  const mainSection = out.split(DIAGNOSTICS_HEADER)[0];
   assert.doesNotMatch(mainSection, /\/maestro hello\b/);
   assert.doesNotMatch(mainSection, /\/maestro pong\b/);
 });
 
 test("hidden diagnostic subcommands are listed under a Diagnostics section", () => {
   const out = renderMaestroHelp(SUBCOMMANDS, { savedWorkflows: [] });
-  assert.match(out, /Diagnostics/);
-  const diag = out.slice(out.indexOf("Diagnostics"));
+  assert.ok(out.includes(DIAGNOSTICS_HEADER));
+  const diag = out.slice(out.indexOf(DIAGNOSTICS_HEADER));
   assert.match(diag, /\/maestro hello\b/);
   assert.match(diag, /\/maestro pong <prompt>/);
 });

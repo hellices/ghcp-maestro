@@ -17,7 +17,8 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ### Added
 - **Background runs + `/maestros` monitoring (issue #2).** `/maestro
-  task|brainstorm|hello|run` now dispatch in the background — the handler returns
+  task|brainstorm|run` (and the `hello` diagnostic) now dispatch in the
+  background — the handler returns
   immediately with a `running in background — watch with /maestros <runId>`
   pointer and the session stays free while the fan-out runs. Per-agent progress
   (state, elapsed, streamed bytes, per-phase token totals) is aggregated by

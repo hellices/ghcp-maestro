@@ -35,7 +35,7 @@ export function renderMaestroHelp(subcommands, opts = {}) {
 
   if (hidden.length > 0) {
     lines.push("");
-    lines.push("Diagnostics (infrastructure smoke tests):");
+    lines.push(DIAGNOSTICS_HEADER);
     for (const sc of hidden) {
       lines.push(`  ${usage(sc)}`);
       lines.push(`    ${sc.summary}`);
@@ -44,3 +44,6 @@ export function renderMaestroHelp(subcommands, opts = {}) {
 
   return lines.join("\n");
 }
+
+/** Header line that introduces the hidden diagnostic subcommands. */
+export const DIAGNOSTICS_HEADER = "Diagnostics (infrastructure smoke tests):";
