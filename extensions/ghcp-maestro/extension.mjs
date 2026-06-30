@@ -11,6 +11,42 @@ import {
   parseAndValidatePlan,
   sanitizeAgentName,
 } from "./runtime/plan.mjs";
+import {
+  defaultWorkflowDirs,
+  scanSavedWorkflows,
+  loadSavedWorkflow,
+  buildWorkflowApi,
+  parseWorkflowArgs,
+} from "./runtime/saved-workflows.mjs";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+
+const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Saved workflows discovered at startup, keyed by name. Populated before
+ * joinSession so they can be exposed via /maestro run and /maestro workflows.
+ * @type {Map<string, { name: string, file: string, dir: string }>}
+ */
+const SAVED_WORKFLOWS = new Map();
+let SAVED_WORKFLOWS_SKIPPED = [];
+
+async function discoverSavedWorkflows() {
+  try {
+    const dirs = defaultWorkflowDirs({ extensionDir: EXTENSION_DIR });
+    const { workflows, skipped } = await scanSavedWorkflows(dirs);
+    SAVED_WORKFLOWS.clear();
+    for (const wf of workflows) SAVED_WORKFLOWS.set(wf.name, wf);
+    SAVED_WORKFLOWS_SKIPPED = skipped;
+  } catch {
+    // Discovery is best-effort; a broken workflows dir must not block the
+    // extension from loading.
+    SAVED_WORKFLOWS.clear();
+    SAVED_WORKFLOWS_SKIPPED = [];
+  }
+}
+
+await discoverSavedWorkflows();
 
 /** Lazily-initialised adapter shared across handler calls. */
 let standaloneAdapter = null;
@@ -40,6 +76,22 @@ const WORKFLOWS = {
     runBrainstormWorkflow(session, args?.topic ?? "", opts),
   task: async (session, args, opts) => runTaskWorkflow(session, args?.task ?? "", opts),
 };
+
+/**
+ * Resolve a workflow handler from a persisted manifest `workflow` field.
+ * Built-ins live in WORKFLOWS; saved workflows are stored as `saved:<name>`.
+ *
+ * @param {string} workflowName
+ * @returns {((session: object, args: unknown, opts: object) => Promise<unknown>) | null}
+ */
+function resolveWorkflowHandler(workflowName) {
+  if (WORKFLOWS[workflowName]) return WORKFLOWS[workflowName];
+  if (workflowName?.startsWith("saved:")) {
+    const name = workflowName.slice("saved:".length);
+    return async (session, args, opts) => runSavedWorkflow(session, name, args ?? {}, opts);
+  }
+  return null;
+}
 
 /**
  * Subcommand registry for /maestro. Each entry knows how to validate its
@@ -72,6 +124,18 @@ const MAESTRO_SUBCOMMANDS = [
     run: (arg) => runPongProbe(session, arg),
   },
   {
+    name: "run",
+    needsArg: "name [args]",
+    summary: "저장된 워크플로우 실행 (M5). 예: /maestro run deep-review {\"topic\":\"...\"} — args 는 JSON 또는 평문(=> {input}).",
+    run: (arg) => runSavedWorkflowCommand(session, arg),
+  },
+  {
+    name: "workflows",
+    needsArg: false,
+    summary: "발견된 저장 워크플로우 목록 (project > user > bundled 우선순위).",
+    run: () => listSavedWorkflows(session),
+  },
+  {
     name: "help",
     needsArg: false,
     summary: "이 도움말.",
@@ -91,6 +155,11 @@ async function maestroHelp() {
   lines.push("  /maestros                     list recent runs (newest first)");
   lines.push("  /maestro-resume <runId>       replay a run; cached agents reused, missing ones rerun");
   lines.push("  /maestro-stop <runId>         mark a run as stopped");
+  if (SAVED_WORKFLOWS.size > 0) {
+    lines.push("");
+    lines.push(`Saved workflows (${SAVED_WORKFLOWS.size}): ${[...SAVED_WORKFLOWS.keys()].join(", ")}`);
+    lines.push("  Run with: /maestro run <name> [json-or-text args]");
+  }
   await session.log(lines.join("\n"));
 }
 
@@ -173,7 +242,7 @@ const session = await joinSession({
           });
           return;
         }
-        const wf = WORKFLOWS[run.manifest.workflow];
+        const wf = resolveWorkflowHandler(run.manifest.workflow);
         if (!wf) {
           await session.log(
             `ghcp-maestro: workflow '${run.manifest.workflow}' is not registered; can't resume`,
@@ -220,9 +289,18 @@ const session = await joinSession({
   ],
 });
 
-await session.log("ghcp-maestro extension loaded (M4 release). Run '/maestro help' for subcommands.", {
-  ephemeral: true,
-});
+await session.log(
+  `ghcp-maestro extension loaded (M6 release). Run '/maestro help' for subcommands.${SAVED_WORKFLOWS.size > 0 ? ` ${SAVED_WORKFLOWS.size} saved workflow(s): ${[...SAVED_WORKFLOWS.keys()].join(", ")}.` : ""}`,
+  {
+    ephemeral: true,
+  },
+);
+for (const s of SAVED_WORKFLOWS_SKIPPED) {
+  await session.log(`ghcp-maestro: skipped workflow ${s.file}: ${s.reason}`, {
+    level: "warning",
+    ephemeral: true,
+  });
+}
 
 // --- Probe trigger (M2.5/M2.6 measurement) ---------------------------------
 //
@@ -287,12 +365,20 @@ if (envTask && envTask.trim().length > 0) {
     });
   });
 }
+const envRun = process.env.GHCP_MAESTRO_PROBE_RUN;
+if (envRun && envRun.trim().length > 0) {
+  runSavedWorkflowCommand(session, envRun.trim()).catch(async (err) => {
+    await session.log(`ghcp-maestro: env run probe failed: ${err?.message ?? err}`, {
+      level: "error",
+    });
+  });
+}
 const envResume = process.env.GHCP_MAESTRO_PROBE_RESUME;
 if (envResume && envResume.trim().length > 0) {
   (async () => {
     try {
       const run = await openRun(envResume.trim());
-      const wf = WORKFLOWS[run.manifest.workflow];
+      const wf = resolveWorkflowHandler(run.manifest.workflow);
       if (!wf) {
         await session.log(
           `ghcp-maestro: env resume failed — workflow '${run.manifest.workflow}' not registered`,
@@ -787,5 +873,108 @@ async function runTaskWorkflow(session, task, opts = {}) {
   await session.log(
     `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
   );
+  return run;
+}
+
+// --- Saved workflows (M5) ---------------------------------------------------
+
+/**
+ * List the saved workflows discovered at startup.
+ */
+async function listSavedWorkflows(session) {
+  if (SAVED_WORKFLOWS.size === 0) {
+    await session.log(
+      "ghcp-maestro: no saved workflows found. Drop a <name>.mjs into ./.ghcp-maestro/workflows, ~/.copilot/plugin-data/ghcp-maestro/workflows, or the bundled saved-workflows dir.",
+    );
+    return;
+  }
+  await session.log(`ghcp-maestro: ${SAVED_WORKFLOWS.size} saved workflow(s):`);
+  for (const wf of SAVED_WORKFLOWS.values()) {
+    let description = "(no description)";
+    try {
+      ({ description } = await loadSavedWorkflow(wf.file));
+    } catch (err) {
+      description = `(failed to load: ${err?.message ?? err})`;
+    }
+    await session.log(`  /maestro run ${wf.name}  —  ${description}  [${wf.dir}]`);
+  }
+}
+
+/**
+ * Parse `<name> [args]` from a /maestro run argument string and dispatch.
+ */
+async function runSavedWorkflowCommand(session, arg) {
+  const trimmed = (arg ?? "").trim();
+  const spaceIdx = trimmed.indexOf(" ");
+  const name = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
+  const rest = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+  if (!name) {
+    await session.log(
+      "ghcp-maestro: /maestro run requires a workflow name. See /maestro workflows.",
+      { level: "warning" },
+    );
+    return;
+  }
+  if (!SAVED_WORKFLOWS.has(name)) {
+    await session.log(
+      `ghcp-maestro: no saved workflow named '${name}'. See /maestro workflows.`,
+      { level: "warning" },
+    );
+    return;
+  }
+  const args = parseWorkflowArgs(rest);
+  await runSavedWorkflow(session, name, args);
+}
+
+/**
+ * Execute a saved workflow by name. Wires a RunStore run (workflow=`saved:<name>`)
+ * so the run shows in /maestros and can be resumed, and injects the sandboxed
+ * api built by buildWorkflowApi.
+ */
+async function runSavedWorkflow(session, name, args, opts = {}) {
+  const descriptor = SAVED_WORKFLOWS.get(name);
+  if (!descriptor) {
+    await session.log(`ghcp-maestro: saved workflow '${name}' is no longer available`, {
+      level: "error",
+    });
+    return;
+  }
+  const run = opts.run ?? (await createRun({ workflow: `saved:${name}`, args }));
+  const runId = run.runId;
+  const adapter = getStandaloneAdapter();
+  await session.log(
+    `ghcp-maestro/${runId}: saved workflow '${name}' (file=${descriptor.file}, dir=${run.runDir})`,
+  );
+
+  let mod;
+  try {
+    mod = await loadSavedWorkflow(descriptor.file);
+  } catch (err) {
+    await run.patchManifest({ status: "error" });
+    await session.log(`ghcp-maestro/${runId}: failed to load '${name}': ${err?.message ?? err}`, {
+      level: "error",
+    });
+    return run;
+  }
+
+  const api = buildWorkflowApi({
+    session,
+    adapter,
+    run,
+    args: args ?? {},
+    concurrency: DEFAULT_CONCURRENCY,
+    namespace: `${runId}/${name}`,
+  });
+
+  try {
+    await mod.run(api);
+    await run.complete();
+    await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' complete`);
+  } catch (err) {
+    await run.patchManifest({ status: "error" });
+    await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`, {
+      level: "error",
+    });
+  }
   return run;
 }
