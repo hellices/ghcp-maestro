@@ -4,6 +4,8 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 import { spawnAll, DEFAULT_CONCURRENCY } from "./runtime/spawn.mjs";
 import { createStandaloneClientAdapter } from "./runtime/adapters/standalone-client.mjs";
+import { createMonitor } from "./runtime/monitor.mjs";
+import { isTruthyEnv, monitorEnabled } from "./runtime/env-flags.mjs";
 import { createRun, openRun, listRuns, defaultBaseDir } from "./runtime/run-store.mjs";
 import {
   buildPlanPrompt,
@@ -43,15 +45,6 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
-
-/**
- * Loose truthy check for opt-in env flags (1/true/yes/on, case-insensitive).
- * @param {string | undefined} value
- * @returns {boolean}
- */
-function isTruthyEnv(value) {
-  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
-}
 
 /**
  * Saved workflows discovered at startup, keyed by name. Populated before
@@ -448,8 +441,21 @@ async function runHelloWorkflow(session, opts = {}) {
       timeoutMs: TIMEOUT_AGENT_MS,
     },
   ];
+  const monitor = monitorEnabled(process.env)
+    ? createMonitor({
+        label: `ghcp-maestro/${runId} explore`,
+        render: (text) => session.log(text, { ephemeral: true }),
+      })
+    : null;
+  monitor?.seed(exploreSpecs.map((s) => ({ id: s.id, agent: s.agent })));
   const t1 = Date.now();
-  const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
+  const exploreResults = await spawnAll(exploreSpecs, {
+    adapter,
+    runHandle: run,
+    onProgress: monitor ? (e) => monitor.onProgress(e) : undefined,
+  });
+  for (const r of exploreResults) monitor?.settle(r.spec.id, r.status === "ok");
+  monitor?.flush();
   const phase1Elapsed = Date.now() - t1;
   for (const r of exploreResults) {
     await session.log(exploreResultLine(runId, r, { mode: "reply" }));
@@ -551,8 +557,21 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
     timeoutMs: TIMEOUT_EXPLORE_MS,
   }));
 
+  const monitor = monitorEnabled(process.env)
+    ? createMonitor({
+        label: `ghcp-maestro/${runId} explore`,
+        render: (text) => session.log(text, { ephemeral: true }),
+      })
+    : null;
+  monitor?.seed(specs.map((s) => ({ id: s.id, agent: s.agent })));
   const t1 = Date.now();
-  const results = await spawnAll(specs, { adapter, runHandle: run });
+  const results = await spawnAll(specs, {
+    adapter,
+    runHandle: run,
+    onProgress: monitor ? (e) => monitor.onProgress(e) : undefined,
+  });
+  for (const r of results) monitor?.settle(r.spec.id, r.status === "ok");
+  monitor?.flush();
   const phase1Elapsed = Date.now() - t1;
 
   await logExploreResults({
@@ -733,8 +752,21 @@ async function runTaskWorkflow(session, task, opts = {}) {
     prompt: s.prompt,
     timeoutMs: TIMEOUT_LONG_MS,
   }));
+  const monitor = monitorEnabled(process.env)
+    ? createMonitor({
+        label: `ghcp-maestro/${runId} explore`,
+        render: (text) => session.log(text, { ephemeral: true }),
+      })
+    : null;
+  monitor?.seed(exploreSpecs.map((s) => ({ id: s.id, agent: s.agent })));
   const t1 = Date.now();
-  const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
+  const exploreResults = await spawnAll(exploreSpecs, {
+    adapter,
+    runHandle: run,
+    onProgress: monitor ? (e) => monitor.onProgress(e) : undefined,
+  });
+  for (const r of exploreResults) monitor?.settle(r.spec.id, r.status === "ok");
+  monitor?.flush();
   const phase1Elapsed = Date.now() - t1;
   await logExploreResults({
     runId,
