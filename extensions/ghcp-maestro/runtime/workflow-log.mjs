@@ -94,3 +94,47 @@ export function agentDigest(results, opts = {}) {
     })
     .join("\n\n");
 }
+
+/**
+ * The per-agent "FULL ↓" dump line that echoes a subagent's whole output into
+ * the session log. Mirrors the pre-refactor inline form exactly: only a
+ * null/undefined output collapses to "(empty)"; an explicit empty string stays
+ * empty after trimming.
+ * @param {string} runId
+ * @param {AgentResultLike} result
+ * @returns {string}
+ */
+export function exploreFullDumpLine(runId, result) {
+  const agent = result?.spec?.agent;
+  const body = (result?.output?.text ?? "(empty)").trim();
+  return `ghcp-maestro/${runId}: explore/${agent} FULL ↓\n${body}`;
+}
+
+/**
+ * Emit the shared explore/fan-out logging sequence both the brainstorm and task
+ * workflows duplicate: a preview line per result, the wall-clock summary, the
+ * full per-agent output dumps, then a warning-level failure summary when any
+ * agent failed. IO is delegated to the caller-supplied `log` so this stays
+ * unit-testable and decoupled from session.
+ *
+ * @param {{
+ *   runId: string,
+ *   results: AgentResultLike[],
+ *   elapsedMs: number,
+ *   count: number,
+ *   label: string,
+ *   log: (msg: string, opts?: { level?: string }) => unknown | Promise<unknown>,
+ * }} params
+ * @returns {Promise<void>}
+ */
+export async function logExploreResults({ runId, results, elapsedMs, count, label, log }) {
+  for (const r of results) {
+    await log(exploreResultLine(runId, r, { mode: "preview" }));
+  }
+  await log(wallClockLine(runId, elapsedMs, count));
+  for (const r of results) {
+    await log(exploreFullDumpLine(runId, r));
+  }
+  const summary = fanoutFailureSummary(runId, results, label);
+  if (summary) await log(summary, { level: "warning" });
+}

@@ -15,9 +15,9 @@ import { planApprovalGate } from "./runtime/plan-approval.mjs";
 import {
   exploreResultLine,
   wallClockLine,
-  fanoutFailureSummary,
   allFailed,
   agentDigest,
+  logExploreResults,
 } from "./runtime/workflow-log.mjs";
 import {
   defaultWorkflowDirs,
@@ -692,23 +692,14 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
   const results = await spawnAll(specs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
 
-  for (const r of results) {
-    await session.log(exploreResultLine(runId, r, { mode: "preview" }));
-  }
-  await session.log(wallClockLine(runId, phase1Elapsed, angles.length));
-
-  for (const r of results) {
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} FULL ↓\n${(r.output?.text ?? "(empty)").trim()}`,
-    );
-  }
-
-  // spawnAll reports per-agent failure in-band (status !== "ok"). Surface those
-  // and refuse to persist a successful run when there is nothing to synthesise.
-  const failureSummary = fanoutFailureSummary(runId, results, "explore");
-  if (failureSummary) {
-    await session.log(failureSummary, { level: "warning" });
-  }
+  await logExploreResults({
+    runId,
+    results,
+    elapsedMs: phase1Elapsed,
+    count: angles.length,
+    label: "explore",
+    log: (msg, opts) => session.log(msg, opts),
+  });
   if (allFailed(results)) {
     await run.patchManifest({ status: "error" });
     await session.log(
@@ -890,25 +881,14 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const t1 = Date.now();
   const exploreResults = await spawnAll(exploreSpecs, { adapter, runHandle: run });
   const phase1Elapsed = Date.now() - t1;
-  for (const r of exploreResults) {
-    await session.log(exploreResultLine(runId, r, { mode: "preview" }));
-  }
-  await session.log(wallClockLine(runId, phase1Elapsed, specs.length));
-
-  // Optional: dump the full per-subtask outputs into the session log so the
-  // human can inspect them alongside the final synth.
-  for (const r of exploreResults) {
-    await session.log(
-      `ghcp-maestro/${runId}: explore/${r.spec.agent} FULL ↓\n${(r.output?.text ?? "(empty)").trim()}`,
-    );
-  }
-
-  // spawnAll reports per-agent failure in-band. Surface failures and don't
-  // synthesise (or persist success) when every subtask failed.
-  const failureSummary = fanoutFailureSummary(runId, exploreResults, "subtask");
-  if (failureSummary) {
-    await session.log(failureSummary, { level: "warning" });
-  }
+  await logExploreResults({
+    runId,
+    results: exploreResults,
+    elapsedMs: phase1Elapsed,
+    count: specs.length,
+    label: "subtask",
+    log: (msg, opts) => session.log(msg, opts),
+  });
   if (allFailed(exploreResults)) {
     await run.patchManifest({ status: "error" });
     await session.log(
