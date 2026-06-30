@@ -19,6 +19,8 @@ import {
   allFailed,
   agentDigest,
   logExploreResults,
+  labeledDumpLine,
+  synthStatusLine,
 } from "./runtime/workflow-log.mjs";
 import {
   defaultWorkflowDirs,
@@ -719,12 +721,8 @@ async function runBrainstormWorkflow(session, topic, opts = {}) {
     { adapter, runHandle: run },
   );
   const phase2Elapsed = Date.now() - t2;
-  await session.log(
-    `ghcp-maestro/${runId}: synth status=${synth.status}${synth.cached ? " (cached)" : ""} took=${synth.finishedAt - synth.startedAt}ms`,
-  );
-  await session.log(
-    `ghcp-maestro/${runId}: TOP 3 NEXT STEPS ↓\n${(synth.output?.text ?? "(empty)").trim()}`,
-  );
+  await session.log(synthStatusLine(runId, synth));
+  await session.log(labeledDumpLine(runId, "TOP 3 NEXT STEPS", synth));
 
   if (synth.status !== "ok") {
     return failRun(
@@ -905,12 +903,8 @@ async function runTaskWorkflow(session, task, opts = {}) {
   const t2 = Date.now();
   const [synth] = await spawnAll([synthSpec], { adapter, runHandle: run });
   const phase2Elapsed = Date.now() - t2;
-  await session.log(
-    `ghcp-maestro/${runId}: synth status=${synth.status}${synth.cached ? " (cached)" : ""} took=${synth.finishedAt - synth.startedAt}ms wall=${phase2Elapsed}ms`,
-  );
-  await session.log(
-    `ghcp-maestro/${runId}: FINAL ANSWER ↓\n${(synth.output?.text ?? "(empty)").trim()}`,
-  );
+  await session.log(synthStatusLine(runId, synth, { wallMs: phase2Elapsed }));
+  await session.log(labeledDumpLine(runId, "FINAL ANSWER", synth));
 
   if (synth.status !== "ok") {
     return failRun(
