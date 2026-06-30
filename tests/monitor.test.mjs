@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMonitor } from "../extensions/ghcp-maestro/runtime/monitor.mjs";
+import { createMonitor, renderDashboard, renderSummary } from "../extensions/ghcp-maestro/runtime/monitor.mjs";
 
 // Deterministic clock + captured render output.
 function harness(throttleMs = 500) {
@@ -86,4 +86,51 @@ test("an unknown specId is ignored, never throws", () => {
   const { monitor } = harness();
   monitor.seed([{ id: "e0", agent: "alpha" }]);
   assert.doesNotThrow(() => monitor.onProgress({ specId: "nope", state: "running" }));
+});
+
+test("snapshot captures per-agent state, tokens and totals", () => {
+  const { monitor } = harness();
+  monitor.seed([{ id: "e0", agent: "alpha" }, { id: "e1", agent: "beta" }]);
+  monitor.onProgress({ specId: "e0", state: "streaming", bytes: 2048, tokens: 1500 });
+  monitor.settle("e1", true);
+  const snap = monitor.snapshot();
+  assert.equal(snap.total, 2);
+  assert.equal(snap.done, 1); // beta settled
+  assert.equal(snap.totalTokens, 1500);
+  const alpha = snap.agents.find((a) => a.specId === "e0");
+  assert.equal(alpha.state, "streaming");
+  assert.equal(alpha.bytes, 2048);
+  assert.equal(alpha.tokens, 1500);
+  assert.equal(typeof alpha.elapsedMs, "number");
+});
+
+test("renderDashboard/renderSummary are pure over a snapshot", () => {
+  const snap = {
+    label: "run-x explore",
+    agents: [{ specId: "e0", agent: "alpha", state: "done", elapsedMs: 1000, bytes: 0, tokens: 0 }],
+    done: 1, total: 1, maxElapsedMs: 1000, totalTokens: 0, updatedAt: 0,
+  };
+  const dash = renderDashboard(snap);
+  assert.match(dash, /run-x explore/);
+  assert.match(dash, /1\/1 done/);
+  assert.match(dash, /alpha/);
+  const sum = renderSummary(snap);
+  assert.match(sum, /1\/1 done/);
+  assert.equal(sum.includes("\n"), false); // one line
+});
+
+test("the render sink receives both text and snapshot", () => {
+  const t = 1000;
+  const calls = [];
+  const monitor = createMonitor({
+    label: "run-x explore",
+    render: (text, snap) => calls.push({ text, snap }),
+    now: () => t,
+  });
+  monitor.seed([{ id: "e0", agent: "alpha" }]);
+  monitor.onProgress({ specId: "e0", state: "running" });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].text, /alpha/);
+  assert.equal(calls[0].snap.total, 1);
+  assert.equal(calls[0].snap.agents[0].agent, "alpha");
 });

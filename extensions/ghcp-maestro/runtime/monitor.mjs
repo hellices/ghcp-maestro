@@ -1,7 +1,8 @@
 // Live run monitor (issue #2). Pure aggregator: turns per-agent progress events
-// into a compact dashboard string and renders it through an injected sink,
-// throttling high-frequency streaming updates. No SDK / IO here — the caller
-// wires `render` to session.log(text, { ephemeral: true }).
+// into a progress snapshot + compact dashboard string and renders it through an
+// injected sink, throttling high-frequency streaming updates. No SDK / IO here —
+// the caller wires `render(text, snapshot)` to either an ephemeral host log or a
+// RunStore progress.json write.
 
 const GLYPH = {
   pending: "·",
@@ -15,7 +16,7 @@ const GLYPH = {
 /**
  * @param {{
  *   label: string,
- *   render: (text: string) => void,
+ *   render: (text: string, snapshot: object) => void,
  *   now?: () => number,
  *   throttleMs?: number,
  * }} opts
@@ -27,10 +28,36 @@ export function createMonitor(opts) {
   const agents = new Map(); // specId -> { id, agent, state, bytes, tokens, startTs, lastTs }
   let lastRenderTs = -Infinity;
 
+  function snapshot() {
+    const t = now();
+    const agentsList = [...agents.values()].map((a) => ({
+      specId: a.id,
+      agent: a.agent,
+      state: a.state,
+      elapsedMs: t - a.startTs,
+      bytes: a.bytes,
+      tokens: a.tokens,
+      ...(a.tool ? { tool: a.tool } : {}),
+    }));
+    const done = agentsList.filter((a) => a.state === "done" || a.state === "failed").length;
+    const maxElapsedMs = agentsList.reduce((m, a) => Math.max(m, a.elapsedMs), 0);
+    const totalTokens = agentsList.reduce((m, a) => m + a.tokens, 0);
+    return {
+      label,
+      agents: agentsList,
+      done,
+      total: agentsList.length,
+      maxElapsedMs,
+      totalTokens,
+      updatedAt: t,
+    };
+  }
+
   function doRender() {
     lastRenderTs = now();
     try {
-      opts.render(format());
+      const snap = snapshot();
+      opts.render(renderDashboard(snap), snap);
     } catch {
       // rendering is best-effort; never propagate
     }
@@ -42,24 +69,6 @@ export function createMonitor(opts) {
       return;
     }
     doRender();
-  }
-
-  function format() {
-    const list = [...agents.values()];
-    const done = list.filter((a) => a.state === "done" || a.state === "failed").length;
-    const maxElapsed = list.reduce((m, a) => Math.max(m, now() - a.startTs), 0);
-    const totalTokens = list.reduce((m, a) => m + a.tokens, 0);
-    const tokTotal = totalTokens ? ` · ${ktok(totalTokens)} tok` : "";
-    const header = `${label} · ${done}/${list.length} done · ${mmss(maxElapsed)}${tokTotal}`;
-    const rows = list.map((a) => {
-      const glyph = GLYPH[a.state] ?? "·";
-      const secs = `${Math.round((now() - a.startTs) / 1000)}s`;
-      const bytes = a.bytes ? `  ${kb(a.bytes)}` : "";
-      const tool = a.state === "tool" && a.tool ? `  (${a.tool})` : "";
-      const tok = a.tokens ? `  ${ktok(a.tokens)} tok` : "";
-      return `  ${glyph} ${a.agent}  ${a.state}  ${secs}${bytes}${tool}${tok}`;
-    });
-    return [header, ...rows].join("\n");
   }
 
   return {
@@ -96,8 +105,30 @@ export function createMonitor(opts) {
     flush() {
       doRender();
     },
-    format,
+    snapshot,
+    format() {
+      return renderDashboard(snapshot());
+    },
   };
+}
+
+/** Pure: render a progress snapshot into the full dashboard (header + rows). */
+export function renderDashboard(snap) {
+  const rows = snap.agents.map((a) => {
+    const glyph = GLYPH[a.state] ?? "·";
+    const secs = `${Math.round(a.elapsedMs / 1000)}s`;
+    const bytes = a.bytes ? `  ${kb(a.bytes)}` : "";
+    const tool = a.state === "tool" && a.tool ? `  (${a.tool})` : "";
+    const tok = a.tokens ? `  ${ktok(a.tokens)} tok` : "";
+    return `  ${glyph} ${a.agent}  ${a.state}  ${secs}${bytes}${tool}${tok}`;
+  });
+  return [renderSummary(snap), ...rows].join("\n");
+}
+
+/** Pure: render a progress snapshot into a one-line summary (the header). */
+export function renderSummary(snap) {
+  const tokTotal = snap.totalTokens ? ` · ${ktok(snap.totalTokens)} tok` : "";
+  return `${snap.label} · ${snap.done}/${snap.total} done · ${mmss(snap.maxElapsedMs)}${tokTotal}`;
 }
 
 function mmss(ms) {
