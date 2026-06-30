@@ -1,22 +1,20 @@
 # Design — Background runs + `/maestros` progress monitoring (v2)
 
-- Status: **Approved (autonomous)** — supersedes the v1 inline dashboard from
-  [`2026-06-30-tui-realtime-monitoring-design.md`](2026-06-30-tui-realtime-monitoring-design.md)
-  for issue [#2](https://github.com/hellices/ghcp-maestro/issues/2).
+- Status: **Approved (autonomous)** — supersedes the v1 inline dashboard
+  approach for issue [#2](https://github.com/hellices/ghcp-maestro/issues/2).
 - Date: 2026-06-30
-- Implements the §11 v2 direction: move the run off the foreground turn and watch
-  it from a command, mirroring Claude Code's `/workflows` model (background run +
-  on-demand progress view) within our SDK's limits.
+- Direction: move the run off the foreground turn and watch it from a command
+  (background run + on-demand progress view) within our SDK's limits.
 
 ## 1. Problem
 
-v1 (PR #6) renders a live dashboard via **ephemeral host logs while the runner
+v1 renders a live dashboard via **ephemeral host logs while the runner
 blocks the foreground turn**. Because `/maestro task|brainstorm|hello` is
 `await`ed in the command handler, the session is occupied for the whole
 minute-plus fan-out and the user cannot do anything else meanwhile.
 
-The user wants the Claude Code shape instead: **kick the run off into the
-background so the session stays free, then watch progress from `/maestros`.**
+The user wants the run **kicked off into the
+background so the session stays free, then watched from `/maestros`.**
 
 ## 2. SDK facts (verified against the installed `@github/copilot-sdk`)
 
@@ -30,7 +28,7 @@ background so the session stays free, then watch progress from `/maestros`.**
 - `session.log(text, { ephemeral: true })` exists, and `session.ui` elicitation
   is gated on `session.capabilities.ui?.elicitation`.
 - Slash commands are **not** an interactive TUI: a `CommandHandler` runs once and
-  returns. There is no arrow-key/drill-down surface like Claude's `/workflows`.
+  returns. There is no arrow-key/drill-down surface for an extension.
   So `/maestros` is a **snapshot view** — each invocation prints the current
   state; re-run it to refresh.
 
@@ -58,8 +56,8 @@ adapter's `subscribeProgress`) and change only the **wiring**:
    fan-out is removed. The aggregation/format logic is kept and reused.
 5. **Approval gate unchanged.** The runner body (plan → parse/retry → approval
    gate → explore → synth) is untouched. In the background the gate still calls
-   `session.ui` when `capabilities.ui.elicitation` is true (Claude's "confirm
-   before the run" moment) and keeps its existing auto-approve fallback when the
+   `session.ui` when `capabilities.ui.elicitation` is true (the confirm-before-the-run
+   moment) and keeps its existing auto-approve fallback when the
    host is non-interactive. Only `task` has a gate; `brainstorm`/`hello` fan out
    directly.
 
