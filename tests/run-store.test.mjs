@@ -7,6 +7,7 @@ import {
   createRun,
   openRun,
   listRuns,
+  readRunProgress,
   readJson,
   writeJsonAtomic,
 } from "../extensions/ghcp-maestro/runtime/run-store.mjs";
@@ -52,6 +53,67 @@ test("writeAgent / readAgent round-trip", async () => {
     const reopened = await openRun(run.runId, { baseDir });
     const again = await reopened.readAgent("alpha");
     assert.equal(again.status, "ok");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("writeProgress / readProgress round-trips a snapshot", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    const snap = {
+      label: "x explore",
+      agents: [],
+      done: 0,
+      total: 2,
+      maxElapsedMs: 0,
+      totalTokens: 0,
+      updatedAt: 123,
+    };
+    await run.writeProgress(snap);
+    assert.deepEqual(await run.readProgress(), snap);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readProgress is undefined before any write", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    assert.equal(await run.readProgress(), undefined);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readRunProgress reads a run's progress by id", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    await run.writeProgress({ done: 1, total: 3 });
+    const got = await readRunProgress(run.runId, { baseDir });
+    assert.equal(got.done, 1);
+    assert.equal(got.total, 3);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readRunProgress is undefined for an unknown run", async () => {
+  const baseDir = await freshBase();
+  try {
+    assert.equal(await readRunProgress("run-does-not-exist", { baseDir }), undefined);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("readRunProgress rejects an unsafe runId", async () => {
+  const baseDir = await freshBase();
+  try {
+    await assert.rejects(() => readRunProgress("../escape", { baseDir }));
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

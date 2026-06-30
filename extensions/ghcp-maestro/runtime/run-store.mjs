@@ -118,6 +118,19 @@ export async function listRuns(opts = {}) {
   return manifests;
 }
 
+/**
+ * Read a run's progress snapshot by id without opening its manifest.
+ * Path-safe; returns undefined when the run or its progress.json is missing.
+ *
+ * @param {string} runId
+ * @param {{ baseDir?: string }} [opts]
+ */
+export async function readRunProgress(runId, opts = {}) {
+  assertSafeRunId(runId);
+  const baseDir = opts.baseDir ?? defaultBaseDir();
+  return readJson(join(baseDir, "runs", runId, "progress.json"));
+}
+
 function makeHandle(runDir, manifest) {
   /**
    * @typedef {Object} AgentRecord
@@ -144,6 +157,16 @@ function makeHandle(runDir, manifest) {
     /** Look up a previously cached agent result. Returns undefined if missing. */
     async readAgent(agentId) {
       return readJson(join(runDir, "agents", `${agentId}.json`));
+    },
+
+    /** Persist the live progress snapshot. Atomic, best-effort. */
+    async writeProgress(snapshot) {
+      await writeJsonAtomic(join(runDir, "progress.json"), snapshot);
+    },
+
+    /** Read the last persisted progress snapshot, or undefined if none. */
+    async readProgress() {
+      return readJson(join(runDir, "progress.json"));
     },
 
     /** Enumerate all cached agent results. */
