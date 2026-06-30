@@ -15,6 +15,7 @@
 
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
+import { randomBytes } from "node:crypto";
 import {
   mkdir,
   readFile,
@@ -186,8 +187,11 @@ function makeHandle(runDir, manifest) {
 
 export async function writeJsonAtomic(filePath, value) {
   await mkdir(dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  await writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
+  // Cryptographically-random suffix so the temp name is unpredictable, and the
+  // "wx" (O_CREAT|O_EXCL) flag refuses to follow a pre-existing path — together
+  // these close the symlink/predictable-temp race a plain Math.random() name has.
+  const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tmp, JSON.stringify(value, null, 2), { encoding: "utf8", flag: "wx" });
   await rename(tmp, filePath);
 }
 

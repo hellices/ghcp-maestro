@@ -53,3 +53,25 @@ test("dispatchEnvTriggers tolerates a missing onError when a handler rejects", a
   await flush();
   assert.ok(true);
 });
+
+test("dispatchEnvTriggers swallows an async-rejecting onError (no unhandled rejection)", async () => {
+  const leaked = [];
+  const onUnhandled = (err) => leaked.push(err);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    let called = false;
+    dispatchEnvTriggers({ X: "boom" }, [
+      { env: "X", label: "x", run: async () => { throw new Error("primary"); } },
+    ], {
+      onError: async () => {
+        called = true;
+        throw new Error("secondary log failure");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(called, true, "onError should still be invoked");
+    assert.deepEqual(leaked, [], "no unhandled rejection should escape");
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandled);
+  }
+});

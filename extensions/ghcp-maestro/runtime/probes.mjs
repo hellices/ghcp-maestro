@@ -17,20 +17,29 @@ import { TIMEOUT_PROBE_MS, TIMEOUT_AGENT_MS } from "./timeouts.mjs";
  * Fire each trigger whose env var is set (non-empty after trim), passing the
  * trimmed value to its handler. Handlers run fire-and-forget — the extension
  * must let joinSession() return before issuing session RPC — so a rejection is
- * routed to onError(label, err) instead of becoming an unhandled rejection.
- * Pure and host-agnostic so the dispatch logic is unit-testable.
+ * routed to onError(label, err) instead of becoming an unhandled rejection. Any
+ * failure from onError itself (it may be async, e.g. session.log) is swallowed
+ * for the same reason. Pure and host-agnostic so the dispatch logic is unit-testable.
  *
  * @param {Record<string, string | undefined>} env
- * @param {Array<{ env: string, label: string, run: (value: string) => unknown }>} triggers
- * @param {{ onError?: (label: string, err: unknown) => void }} [opts]
+ * @param {Array<{ env: string, label: string, run: (value: string) => unknown | Promise<unknown> }>} triggers
+ * @param {{ onError?: (label: string, err: unknown) => unknown | Promise<unknown> }} [opts]
  */
 export function dispatchEnvTriggers(env, triggers, { onError } = {}) {
   for (const trigger of triggers) {
     const raw = env[trigger.env];
     if (!raw || raw.trim().length === 0) continue;
-    Promise.resolve()
+    void Promise.resolve()
       .then(() => trigger.run(raw.trim()))
-      .catch((err) => onError?.(trigger.label, err));
+      .catch(async (err) => {
+        try {
+          await onError?.(trigger.label, err);
+        } catch {
+          // Secondary reporting failure (e.g. session.log rejected) in a
+          // fire-and-forget probe — swallow so it can't surface as an unhandled
+          // rejection, which is exactly what this helper promises to prevent.
+        }
+      });
   }
 }
 

@@ -384,7 +384,11 @@ dispatchEnvTriggers(
       label: "pong probe",
       run: (v) => runPongProbe(session, v, getStandaloneAdapter()),
     },
-    { env: "GHCP_MAESTRO_PROBE_HELLO", label: "hello probe", run: () => runHelloWorkflow(session) },
+    {
+      env: "GHCP_MAESTRO_PROBE_HELLO",
+      label: "hello probe",
+      run: (v) => (isTruthyEnv(v) ? runHelloWorkflow(session) : undefined),
+    },
     {
       env: "GHCP_MAESTRO_PROBE_BRAINSTORM",
       label: "brainstorm probe",
