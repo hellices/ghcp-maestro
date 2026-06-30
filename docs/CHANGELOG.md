@@ -6,6 +6,15 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+### Changed
+- **Diagnostics hidden from `/maestro help`.** `hello` and `pong` are
+  infrastructure smoke tests, not user features — they now carry a `hidden` flag
+  and render under a separate "Diagnostics" section instead of the main
+  subcommand list (the commands still work, and the `GHCP_MAESTRO_PROBE_*` env
+  triggers and resume registry are unchanged). The `brainstorm` summary drops the
+  "demo" framing — it is a real multi-lens feature. Help rendering moved to a
+  pure, unit-tested `runtime/help.mjs` (`renderMaestroHelp`).
+
 ### Added
 - **Background runs + `/maestros` monitoring (issue #2).** `/maestro
   task|brainstorm|hello|run` now dispatch in the background — the handler returns

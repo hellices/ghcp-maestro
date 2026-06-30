@@ -43,6 +43,7 @@ import {
 } from "./runtime/saved-workflows.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { renderMaestroHelp } from "./runtime/help.mjs";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -133,20 +134,22 @@ const MAESTRO_SUBCOMMANDS = [
     name: "brainstorm",
     needsArg: "topic",
     background: true,
-    summary: "Fixed 4-lens demo (tech/ux/biz/risk). Each lens runs in an isolated child session in parallel, then synth derives the TOP 3 actions.",
+    summary: "Brainstorm a topic from 4 fixed lenses (tech/ux/biz/risk) in parallel isolated child sessions, then synth derives the TOP 3 actions.",
     run: (arg) => runBrainstormWorkflow(session, arg),
   },
   {
     name: "hello",
     needsArg: false,
     background: true,
-    summary: "M2.6 demo — fixed 3 explore + 1 synth script, all isolated child sessions.",
+    hidden: true,
+    summary: "Diagnostic smoke test — fixed 3 explore + 1 synth across isolated child sessions, verifying the fan-out pipeline end-to-end.",
     run: () => runHelloWorkflow(session),
   },
   {
     name: "pong",
     needsArg: "prompt",
-    summary: "Send one prompt to a single isolated child Copilot session and collect the reply (standalone-client adapter diagnostic).",
+    hidden: true,
+    summary: "Diagnostic — send one prompt to a single isolated child Copilot session and collect the reply (standalone-client adapter probe).",
     run: (arg) => runPongProbe(session, arg, getStandaloneAdapter()),
   },
   {
@@ -171,23 +174,7 @@ const MAESTRO_SUBCOMMANDS = [
 ];
 
 async function maestroHelp() {
-  const lines = ["ghcp-maestro: available /maestro subcommands"];
-  for (const sc of MAESTRO_SUBCOMMANDS) {
-    const usage = sc.needsArg ? `/maestro ${sc.name} <${sc.needsArg}>` : `/maestro ${sc.name}`;
-    lines.push(`  ${usage}`);
-    lines.push(`    ${sc.summary}`);
-  }
-  lines.push("");
-  lines.push("Run management:");
-  lines.push("  /maestros [runId]             list recent runs, or show one run's live dashboard");
-  lines.push("  /maestro-resume <runId>       replay a run; cached agents reused, missing ones rerun");
-  lines.push("  /maestro-stop <runId>         mark a run as stopped");
-  if (SAVED_WORKFLOWS.size > 0) {
-    lines.push("");
-    lines.push(`Saved workflows (${SAVED_WORKFLOWS.size}): ${[...SAVED_WORKFLOWS.keys()].join(", ")}`);
-    lines.push("  Run with: /maestro run <name> [json-or-text args]");
-  }
-  await session.log(lines.join("\n"));
+  await session.log(renderMaestroHelp(MAESTRO_SUBCOMMANDS, { savedWorkflows: [...SAVED_WORKFLOWS.keys()] }));
 }
 
 const session = await joinSession({
@@ -438,11 +425,13 @@ dispatchEnvTriggers(
   },
 );
 
-// --- Hello workflow (standalone adapter, M2.6) ------------------------------
+// --- Hello workflow (diagnostic smoke test, standalone adapter) --------------
 
 /**
- * Two-phase demo workflow exercised end-to-end with the standalone-client
- * adapter, so each "agent" is a real isolated Copilot CLI child session.
+ * Two-phase diagnostic smoke test exercised end-to-end with the standalone-client
+ * adapter, so each "agent" is a real isolated Copilot CLI child session. Fixed
+ * prompts (ALPHA/BRAVO/CHARLIE → joined) verify the fan-out pipeline works; not
+ * a user-facing feature (hidden from /maestro help, kept for infra validation).
  *   phase explore  → 3 child sessions in parallel
  *   phase synth    → 1 child session that summarises the explore results
  *
@@ -538,7 +527,7 @@ async function runHelloWorkflow(session, opts = {}) {
   return run;
 }
 
-// --- Brainstorm workflow (M2.6 demo) ----------------------------------------
+// --- Brainstorm workflow ----------------------------------------------------
 
 /**
  * Real-world multi-angle brainstorm.
