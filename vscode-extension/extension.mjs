@@ -19,7 +19,20 @@ import { createRuntimeBridge } from "./runtime-bridge.mjs";
 import { createRunsTreeProvider } from "./views/runs-tree-provider.mjs";
 import { createConsolePanel } from "./views/console-panel.mjs";
 
-const DEFAULT_MODEL = "gpt-5";
+const DEFAULT_MODEL = "claude-sonnet-4.5";
+const DEFAULT_PLAN_TIMEOUT_MS = 180_000;
+const DEFAULT_AGENT_TIMEOUT_MS = 600_000;
+
+function resolveModel() {
+  const configured = vscode.workspace.getConfiguration("maestro").get("model");
+  if (typeof configured === "string" && configured.trim()) return configured.trim();
+  return DEFAULT_MODEL;
+}
+
+function resolvePositiveNumber(key, fallback) {
+  const raw = vscode.workspace.getConfiguration("maestro").get(key);
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
 
 /** Adapt a chat response stream to the surface-neutral LogPort (per-turn ack). */
 function streamLogPort(stream) {
@@ -62,10 +75,14 @@ export function activate(context) {
   const uiSink = createVsCodeUiSink({ model });
 
   const cliPath = resolveCopilotPath();
+  const modelId = resolveModel();
+  const planTimeoutMs = resolvePositiveNumber("planTimeoutMs", DEFAULT_PLAN_TIMEOUT_MS);
+  const agentTimeoutMs = resolvePositiveNumber("agentTimeoutMs", DEFAULT_AGENT_TIMEOUT_MS);
+  output.appendLine(`[info] maestro using model: ${modelId} (planTimeoutMs=${planTimeoutMs}, agentTimeoutMs=${agentTimeoutMs})`);
   const runtime = createCopilotRuntime({
     createAdapter: () =>
       createStandaloneClientAdapter({
-        defaultModel: DEFAULT_MODEL,
+        defaultModel: modelId,
         logger: {
           info: (m) => output.appendLine(`[standalone] ${m}`),
           warn: (m) => output.appendLine(`[standalone:warn] ${m}`),
@@ -74,7 +91,9 @@ export function activate(context) {
     spawn,
     buildPlanPrompt,
     parseAndValidatePlan,
-    defaultModel: DEFAULT_MODEL,
+    defaultModel: modelId,
+    planTimeoutMs,
+    agentTimeoutMs,
   });
   context.subscriptions.push({ dispose: () => void runtime.stop?.() });
 

@@ -7,8 +7,8 @@
 // `parseAndValidatePlan`, having first resolved the Copilot CLI binary path
 // (which is NOT process.execPath inside the VS Code extension host).
 
-const PLAN_TIMEOUT_MS = 60_000;
-const AGENT_TIMEOUT_MS = 120_000;
+const DEFAULT_PLAN_TIMEOUT_MS = 180_000;
+const DEFAULT_AGENT_TIMEOUT_MS = 600_000;
 
 /**
  * @param {{
@@ -17,22 +17,37 @@ const AGENT_TIMEOUT_MS = 120_000;
  *   buildPlanPrompt: (task: string) => string,
  *   parseAndValidatePlan: (text: string) => Array<object>,
  *   defaultModel?: string,
+ *   planTimeoutMs?: number,
+ *   agentTimeoutMs?: number,
  * }} deps
  */
-export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, parseAndValidatePlan, defaultModel }) {
+export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, parseAndValidatePlan, defaultModel, planTimeoutMs, agentTimeoutMs }) {
+  const planTimeout = Number.isFinite(planTimeoutMs) && planTimeoutMs > 0 ? planTimeoutMs : DEFAULT_PLAN_TIMEOUT_MS;
+  const agentTimeout = Number.isFinite(agentTimeoutMs) && agentTimeoutMs > 0 ? agentTimeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   let adapter = null;
   const getAdapter = () => (adapter ??= createAdapter());
 
   return {
     planTask: async ({ args }) => {
       const task = (args ?? "").trim();
-      const planSpec = { id: "plan", agent: "plan", prompt: buildPlanPrompt(task), model: defaultModel, timeoutMs: PLAN_TIMEOUT_MS };
+      const planSpec = { id: "plan", agent: "plan", prompt: buildPlanPrompt(task), model: defaultModel, timeoutMs: planTimeout };
       const res = await spawn(planSpec, { adapter: getAdapter() });
+      if (res?.status !== "ok") {
+        throw new Error(
+          `plan spawn ${res?.status ?? "unknown"}: ${res?.error ?? "no error message"}`,
+        );
+      }
       const text = (res?.output?.text ?? "").trim();
+      if (!text) {
+        const outPreview = (() => {
+          try { return JSON.stringify(res.output)?.slice(0, 300); } catch { return "<unserializable>"; }
+        })();
+        throw new Error(`plan spawn returned no text; output=${outPreview}`);
+      }
       const specs = parseAndValidatePlan(text).map((s) => ({
         ...s,
         model: s.model ?? defaultModel,
-        timeoutMs: s.timeoutMs ?? AGENT_TIMEOUT_MS,
+        timeoutMs: s.timeoutMs ?? agentTimeout,
       }));
       return { task, agents: specs };
     },
@@ -49,7 +64,7 @@ export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, pa
         agent: "synth",
         prompt: `Task: ${task}\n\nThe subtask outputs below were produced by parallel agents. Synthesize them into a single coherent answer.\n\n${collected}`,
         model: defaultModel,
-        timeoutMs: AGENT_TIMEOUT_MS,
+        timeoutMs: agentTimeout,
       };
       const res = await spawn(spec, { adapter: getAdapter(), signal });
       return res?.output?.text ?? "";
