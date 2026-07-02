@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { envInt } from "../extensions/ghcp-maestro/runtime/timeouts.mjs";
+import { envInt } from "../core/timeouts.mjs";
 
 test("envInt returns the fallback when the var is unset or blank", () => {
   assert.equal(envInt("X", 120_000, {}), 120_000);

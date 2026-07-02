@@ -7,9 +7,10 @@
 // Keep logic out of here; this file is composition and adaptation only.
 
 import * as vscode from "vscode";
-import { spawn } from "../extensions/ghcp-maestro/runtime/spawn.mjs";
-import { createStandaloneClientAdapter } from "../extensions/ghcp-maestro/runtime/adapters/standalone-client.mjs";
-import { buildPlanPrompt, parseAndValidatePlan } from "../extensions/ghcp-maestro/runtime/plan.mjs";
+import { spawn, DEFAULT_CONCURRENCY } from "../core/spawn.mjs";
+import { createStandaloneClientAdapter } from "../core/adapters/standalone-client.mjs";
+import { buildPlanPrompt, parseAndValidatePlan } from "../core/plan.mjs";
+import { buildSynthPrompt } from "../core/synth.mjs";
 import { createMaestroParticipant } from "./chat/participant.mjs";
 import { createRunViewModel } from "./state/run-view-model.mjs";
 import { createVsCodeUiSink } from "./adapters/vscode-ui-sink.mjs";
@@ -91,6 +92,7 @@ export function activate(context) {
     spawn,
     buildPlanPrompt,
     parseAndValidatePlan,
+    buildSynthPrompt,
     defaultModel: modelId,
     planTimeoutMs,
     agentTimeoutMs,
@@ -102,6 +104,7 @@ export function activate(context) {
     planTask: runtime.planTask,
     runAgent: runtime.runAgent,
     synthesize: runtime.synthesize,
+    concurrency: DEFAULT_CONCURRENCY,
     log: channelLogPort(output),
   });
 

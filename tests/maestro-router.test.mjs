@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMaestroRouter } from "../extensions/ghcp-maestro/runtime/maestro-router.mjs";
+import { createMaestroRouter } from "../core/maestro-router.mjs";
 
 function makeHarness(overrides = {}) {
   const calls = { help: 0, unknown: [], missingArg: [], bgError: [], ran: [] };

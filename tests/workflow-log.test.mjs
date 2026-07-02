@@ -10,7 +10,7 @@ import {
   logExploreResults,
   labeledDumpLine,
   synthStatusLine,
-} from "../extensions/ghcp-maestro/runtime/workflow-log.mjs";
+} from "../core/workflow-log.mjs";
 
 // A minimal AgentResult-like shape, matching what spawnAll returns.
 function res(agent, status, text, { cached = false, startedAt = 0, finishedAt = 100 } = {}) {

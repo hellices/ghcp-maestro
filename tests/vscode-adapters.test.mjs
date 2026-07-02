@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createVsCodeLogPort } from "../vscode-extension/adapters/vscode-log-port.mjs";
 import { createVsCodeCancellationPort } from "../vscode-extension/adapters/vscode-cancellation-port.mjs";
 import { createCopilotRuntime } from "../vscode-extension/adapters/copilot-runtime.mjs";
+import { buildSynthPrompt } from "../core/synth.mjs";
 
 test("log port writes leveled markdown to the stream", () => {
   const out = [];
@@ -40,7 +41,7 @@ test("copilot runtime planTask spawns a plan agent and parses specs", async () =
     createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
     spawn: async (spec) => {
       spawned.push(spec);
-      return { output: { text: '[{"agent":"a","prompt":"p"}]' } };
+      return { status: "ok", output: { text: '[{"agent":"a","prompt":"p"}]' } };
     },
     buildPlanPrompt: (task) => `PLAN: ${task}`,
     parseAndValidatePlan: (text) => JSON.parse(text),
@@ -82,6 +83,7 @@ test("copilot runtime synthesize merges subtask outputs into one spawn", async (
     },
     buildPlanPrompt: (t) => t,
     parseAndValidatePlan: () => [],
+    buildSynthPrompt,
     defaultModel: "gpt-5",
   });
   const out = await runtime.synthesize({

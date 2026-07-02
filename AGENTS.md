@@ -12,7 +12,8 @@ A GitHub Copilot CLI multi-agent workflow runtime. A single plugin that
 auto-decomposes a natural-language task, fans out isolated child Copilot
 sessions, and adds persistence/resume.
 Main surface: `extensions/ghcp-maestro/extension.mjs` (`@github/copilot-sdk/extension`
-`joinSession`).
+`joinSession`). Shared runtime kernel: `core/*` (the `@ghcp-maestro/core` package,
+imported by both the CLI plugin and `vscode-extension/`).
 Plugin manifest: `plugin.json` (repo root).
 
 ## Hard rules
@@ -67,15 +68,21 @@ needed (commit message bodies, release notes, etc.).
 
 Phase 6 / **M6 release** plus **M4.x** are done. On top of the M4 task workflow
 (plan → fan-out[N] → synth):
-- **M5 saved workflows** — `runtime/saved-workflows.mjs` discovery
+- **M5 saved workflows** — `core/saved-workflows.mjs` discovery
   (project > user > bundled) + `/maestro run <name>` / `/maestro workflows`,
   sandboxed `api` (`buildWorkflowApi`), bundled `deep-review` example.
-- **M6 quality helpers** — `runtime/quality.mjs`: `adversarialReview` /
+- **M6 quality helpers** — `core/quality.mjs`: `adversarialReview` /
   `multiAngle` / `fixLoop` / `crossCheck` (on top of `spawnAll`, adapter-agnostic).
-- **M4.x plan pre-approval gate** — `runtime/plan-approval.mjs`: review the
+- **M4.x plan pre-approval gate** — `core/plan-approval.mjs`: review the
   decomposed subtasks and approve / subset / abort before fan-out, gated on
   `session.capabilities.ui.elicitation` with auto-approve fallbacks.
-- **Plan logic extracted** — `runtime/plan.mjs` (importable, pure functions).
+- **Plan logic extracted** — `core/plan.mjs` (importable, pure functions).
+- **Shared core package** — the surface-agnostic kernel lives in `core/`
+  (`@ghcp-maestro/core`), imported symmetrically by the CLI plugin
+  (`extensions/ghcp-maestro/extension.mjs`) and `vscode-extension/`. Synth prompt
+  (`core/synth.mjs`) and the run-management commands (`core/run-commands.mjs`:
+  `showRuns` / `resumeRun` / `stopRun`) are shared, so both surfaces stay in
+  lock-step and `extension.mjs` is a thin composition root.
 - **CI / static analysis** — ESLint flat config + `.github/workflows/ci.yml`
   (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 77 unit tests.
 

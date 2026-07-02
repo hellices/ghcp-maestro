@@ -24,6 +24,7 @@ import { readdir, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import { spawn, spawnAll, DEFAULT_CONCURRENCY } from "./spawn.mjs";
+import { runPhase } from "./run-phase.mjs";
 import {
   adversarialReview,
   multiAngle,
@@ -160,8 +161,9 @@ export async function loadSavedWorkflow(file) {
 
 /**
  * Build the sandboxed API object injected into a saved workflow. The script
- * gets pre-bound spawn/spawnAll (adapter + runHandle already wired) plus the
- * quality helpers, a `phase` grouper, structured `args`, and `log`.
+ * gets pre-bound spawn/spawnAll (adapter + runHandle already wired), a
+ * monitored `runPhase`, plus the quality helpers, a `phase` grouper, structured
+ * `args`, and `log`.
  *
  * @param {{
  *   session: { log: Function },
@@ -198,6 +200,21 @@ export function buildWorkflowApi(deps) {
     run,
     spawn: (spec) => spawn(spec, base),
     spawnAll: (specs, extra) => spawnAll(specs, { ...base, ...(extra || {}) }),
+    /**
+     * Run a named phase through the same monitor+spawnAll+settle+flush
+     * choreography the built-in workflows use, so a saved workflow's fan-outs
+     * show up in /maestros progress just like `task`/`brainstorm`. Returns
+     * `{ results, elapsedMs }`. Requires a run handle (always present here).
+     */
+    runPhase: (name, specs) =>
+      runPhase(specs, {
+        run,
+        runId: run?.runId ?? namespace,
+        phase: name,
+        adapter,
+        concurrency,
+        signal,
+      }),
     async phase(name, fn) {
       await log(`phase=${name} start`);
       const t0 = Date.now();

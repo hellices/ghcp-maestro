@@ -10,7 +10,7 @@
  * @param {Object} opts
  * @param {ReturnType<import("../state/run-view-model.mjs").createRunViewModel>} opts.model
  * @param {() => void} [opts.onChange] - invoked after each applied event (UI refresh hook)
- * @returns {import("../../extensions/ghcp-maestro/runtime/ports.mjs").UiSinkPort}
+ * @returns {import("../../core/ports.mjs").UiSinkPort}
  */
 export function createVsCodeUiSink({ model, onChange }) {
   return {

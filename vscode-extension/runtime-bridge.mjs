@@ -7,6 +7,9 @@
 // normalised RunUiEvent lifecycle the UI sink/view-model consume. All
 // VS Code-, SDK-, and binary-path concerns are injected, never imported here.
 
+// Fallback fan-out limit when the composition root doesn't inject `concurrency`.
+// The running system sources the real value from core (DEFAULT_CONCURRENCY),
+// passed in via createRuntimeBridge; this literal is only a last-resort default.
 const DEFAULT_CONCURRENCY = 16;
 const EXPLORE_PHASE = "explore";
 const SYNTH_PHASE = "synth";
@@ -35,7 +38,7 @@ function outputText(result) {
 
 /**
  * @param {{
- *   emit: (event: import("../extensions/ghcp-maestro/runtime/ports.mjs").RunUiEvent) => void,
+ *   emit: (event: import("../core/ports.mjs").RunUiEvent) => void,
  *   planTask: (input: {subcommand: string, args: string}) => Promise<{task: string, agents: Array<object>}>,
  *   runAgent: (spec: object, ctx: { onProgress?: (p: object) => void, signal?: AbortSignal }) => Promise<object>,
  *   synthesize?: (input: {task: string, results: Array<object>, signal?: AbortSignal}) => Promise<object|string>,
@@ -44,9 +47,9 @@ function outputText(result) {
  *   concurrency?: number,
  *   now?: () => number,
  *   newRunId?: (subcommand: string) => string,
- *   log?: import("../extensions/ghcp-maestro/runtime/ports.mjs").LogPort,
+ *   log?: import("../core/ports.mjs").LogPort,
  * }} deps
- * @returns {import("../extensions/ghcp-maestro/runtime/ports.mjs").RuntimePort}
+ * @returns {import("../core/ports.mjs").RuntimePort}
  */
 export function createRuntimeBridge(deps) {
   const {

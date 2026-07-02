@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnAll } from "../extensions/ghcp-maestro/runtime/spawn.mjs";
+import { spawn, spawnAll } from "../core/spawn.mjs";
 
 // An adapter that emits one progress partial then resolves.
 function emittingAdapter(partial) {

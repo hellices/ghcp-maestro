@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   planApprovalGate,
-} from "../extensions/ghcp-maestro/runtime/plan-approval.mjs";
+} from "../core/plan-approval.mjs";
 
 // A fake `session.ui` that records the params it was called with and replies
 // according to `responder(params)`. Deterministic — no real host dialog.

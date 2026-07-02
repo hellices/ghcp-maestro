@@ -34,7 +34,7 @@ function newAgent(agentId) {
 
 /**
  * @returns {{
- *   apply: (event: import("../../extensions/ghcp-maestro/runtime/ports.mjs").RunUiEvent) => void,
+ *   apply: (event: import("../../core/ports.mjs").RunUiEvent) => void,
  *   snapshot: () => { runs: Array<object> },
  *   agentDetail: (runId: string, phase: string, agentId: string) => object | undefined,
  *   subscribe: (cb: () => void) => (() => void),

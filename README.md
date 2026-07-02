@@ -157,11 +157,11 @@ run every subtask.
 
 ## Install surfaces
 
-`/maestro` runs on two surfaces that **share one runtime core**
-(`extensions/ghcp-maestro/runtime/*`) but are **installed and distributed
+`/maestro` runs on two surfaces that **share one runtime core** (`core/*`, the
+`@ghcp-maestro/core` package) but are **installed and distributed
 separately**. The core is surface-agnostic; each surface is a thin adapter that
 implements the ports in
-[`runtime/ports.mjs`](extensions/ghcp-maestro/runtime/ports.mjs)
+[`core/ports.mjs`](core/ports.mjs)
 (`RuntimePort` / `UiSinkPort` / `LogPort` / `CancellationPort`).
 
 | Surface | Install | Run | UI |

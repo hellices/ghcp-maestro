@@ -11,18 +11,19 @@ Copy-Item "$src\vscode-extension\adapters\*" "$stage\adapters\" -Recurse -Force
 Copy-Item "$src\vscode-extension\chat\*" "$stage\chat\" -Recurse -Force
 Copy-Item "$src\vscode-extension\state\*" "$stage\state\" -Recurse -Force
 Copy-Item "$src\vscode-extension\views\*" "$stage\views\" -Recurse -Force
-Remove-Item "$stage\runtime" -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item "$src\extensions\ghcp-maestro\runtime" "$stage\runtime" -Recurse -Force
+Remove-Item "$stage\core" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item "$src\core" "$stage\core" -Recurse -Force
 
-# Re-apply import path rewrites (source imports sibling ../extensions/... which doesn't exist in the packaged layout)
+# Re-apply import path rewrites (source imports the sibling ../core/... peer package,
+# which becomes a flattened ./core sibling inside the packaged vsix layout)
 $extFile = "$stage\extension.mjs"
 $ext = [IO.File]::ReadAllText($extFile, $utf8)
-$ext2 = $ext -replace [regex]::Escape('"../extensions/ghcp-maestro/runtime/'), '"./runtime/'
+$ext2 = $ext -replace [regex]::Escape('"../core/'), '"./core/'
 [IO.File]::WriteAllText($extFile, $ext2, $utf8)
 
 $partFile = "$stage\chat\participant.mjs"
 $part = [IO.File]::ReadAllText($partFile, $utf8)
-$part2 = $part -replace [regex]::Escape('"../../extensions/ghcp-maestro/runtime/'), '"../runtime/'
+$part2 = $part -replace [regex]::Escape('"../../core/'), '"../core/'
 [IO.File]::WriteAllText($partFile, $part2, $utf8)
 
 # Re-add publisher (source vscode-extension/package.json now has it; harmless if already present)
@@ -43,7 +44,7 @@ if ($pkg -notmatch '@github/copilot-sdk') {
 }
 
 Write-Host "--- staged extension.mjs sibling imports ---"
-Select-String -Path $extFile -Pattern 'runtime/' | Select-Object -First 5 Line
+Select-String -Path $extFile -Pattern 'core/' | Select-Object -First 5 Line
 
 Write-Host "--- staged package.json head ---"
 Get-Content $pkgFile -TotalCount 12 -Encoding UTF8

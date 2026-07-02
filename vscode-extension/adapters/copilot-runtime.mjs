@@ -12,16 +12,17 @@ const DEFAULT_AGENT_TIMEOUT_MS = 600_000;
 
 /**
  * @param {{
- *   createAdapter: () => (import("../../extensions/ghcp-maestro/runtime/spawn.mjs").SubagentAdapter & { stop?: () => Promise<void> }),
- *   spawn: typeof import("../../extensions/ghcp-maestro/runtime/spawn.mjs").spawn,
+ *   createAdapter: () => (import("../../core/spawn.mjs").SubagentAdapter & { stop?: () => Promise<void> }),
+ *   spawn: typeof import("../../core/spawn.mjs").spawn,
  *   buildPlanPrompt: (task: string) => string,
  *   parseAndValidatePlan: (text: string) => Array<object>,
+ *   buildSynthPrompt: (input: { task: string, results: Array<object> }) => string,
  *   defaultModel?: string,
  *   planTimeoutMs?: number,
  *   agentTimeoutMs?: number,
  * }} deps
  */
-export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, parseAndValidatePlan, defaultModel, planTimeoutMs, agentTimeoutMs }) {
+export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, parseAndValidatePlan, buildSynthPrompt, defaultModel, planTimeoutMs, agentTimeoutMs }) {
   const planTimeout = Number.isFinite(planTimeoutMs) && planTimeoutMs > 0 ? planTimeoutMs : DEFAULT_PLAN_TIMEOUT_MS;
   const agentTimeout = Number.isFinite(agentTimeoutMs) && agentTimeoutMs > 0 ? agentTimeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   let adapter = null;
@@ -56,13 +57,10 @@ export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, pa
       spawn(spec, { adapter: getAdapter(), onProgress: ctx?.onProgress, signal: ctx?.signal }),
 
     synthesize: async ({ task, results, signal }) => {
-      const collected = results
-        .map((r, i) => `## Subtask ${i + 1} (${r?.spec?.agent ?? r?.id ?? i + 1})\n${r?.output?.text ?? r?.error ?? "(no output)"}`)
-        .join("\n\n");
       const spec = {
         id: "synth",
         agent: "synth",
-        prompt: `Task: ${task}\n\nThe subtask outputs below were produced by parallel agents. Synthesize them into a single coherent answer.\n\n${collected}`,
+        prompt: buildSynthPrompt({ task, results }),
         model: defaultModel,
         timeoutMs: agentTimeout,
       };

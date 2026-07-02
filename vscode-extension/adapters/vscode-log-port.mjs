@@ -6,7 +6,7 @@
 
 /**
  * @param {{ stream: { markdown: (text: string) => void } }} deps
- * @returns {import("../../extensions/ghcp-maestro/runtime/ports.mjs").LogPort}
+ * @returns {import("../../core/ports.mjs").LogPort}
  */
 export function createVsCodeLogPort({ stream }) {
   return {

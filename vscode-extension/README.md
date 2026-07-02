@@ -46,4 +46,4 @@ they progress.
 A thin adapter over the shared core. Surface-neutral, vscode-free modules
 (`runtime-bridge.mjs`, `state/`, `views/` helpers, `adapters/`) are unit-tested
 under `node --test`; only `extension.mjs` imports `vscode`. See the
-[interface contracts](../extensions/ghcp-maestro/runtime/ports.mjs).
+[interface contracts](../core/ports.mjs).

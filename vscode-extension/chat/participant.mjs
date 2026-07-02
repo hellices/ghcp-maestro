@@ -4,8 +4,8 @@
 // `node --test`; the per-request stream/token are adapted to a LogPort by the
 // composition root (extension.mjs) and passed in.
 
-import { createMaestroRouter } from "../../extensions/ghcp-maestro/runtime/maestro-router.mjs";
-import { renderMaestroHelp } from "../../extensions/ghcp-maestro/runtime/help.mjs";
+import { createMaestroRouter } from "../../core/maestro-router.mjs";
+import { renderMaestroHelp } from "../../core/help.mjs";
 
 /**
  * Subcommands exposed on the VS Code surface, bound to the per-request ctx so
@@ -14,8 +14,8 @@ import { renderMaestroHelp } from "../../extensions/ghcp-maestro/runtime/help.mj
  * reports through the UI sink, not the chat stream (which closes with the turn).
  * `run`/`workflows` mirror the saved-workflow commands.
  *
- * @param {import("../../extensions/ghcp-maestro/runtime/ports.mjs").RuntimePort} runtimePort
- * @param {{ logPort?: import("../../extensions/ghcp-maestro/runtime/ports.mjs").LogPort, uiSink?: import("../../extensions/ghcp-maestro/runtime/ports.mjs").UiSinkPort }} ctx
+ * @param {import("../../core/ports.mjs").RuntimePort} runtimePort
+ * @param {{ logPort?: import("../../core/ports.mjs").LogPort, uiSink?: import("../../core/ports.mjs").UiSinkPort }} ctx
  */
 function buildSubcommands(runtimePort, ctx) {
   const cmd = (subcommand) => (args) => runtimePort.runCommand({ subcommand, args }, ctx);
@@ -52,8 +52,8 @@ const LEADING_INVOCATION = /^\s*[@/]?maestro\b\s*/i;
 
 /**
  * @param {Object} opts
- * @param {import("../../extensions/ghcp-maestro/runtime/ports.mjs").RuntimePort} opts.runtimePort
- * @returns {{ handleRequest: (text: string, ctx?: { logPort?: import("../../extensions/ghcp-maestro/runtime/ports.mjs").LogPort, uiSink?: import("../../extensions/ghcp-maestro/runtime/ports.mjs").UiSinkPort }) => Promise<void> }}
+ * @param {import("../../core/ports.mjs").RuntimePort} opts.runtimePort
+ * @returns {{ handleRequest: (text: string, ctx?: { logPort?: import("../../core/ports.mjs").LogPort, uiSink?: import("../../core/ports.mjs").UiSinkPort }) => Promise<void> }}
  */
 export function createMaestroParticipant({ runtimePort }) {
   return {

@@ -6,7 +6,7 @@
 
 /**
  * @param {{ isCancellationRequested?: boolean, onCancellationRequested?: (cb: () => void) => unknown }} [token]
- * @returns {import("../../extensions/ghcp-maestro/runtime/ports.mjs").CancellationPort}
+ * @returns {import("../../core/ports.mjs").CancellationPort}
  */
 export function createVsCodeCancellationPort(token) {
   return {

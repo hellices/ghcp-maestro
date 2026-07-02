@@ -11,7 +11,7 @@ import {
   buildWorkflowApi,
   parseWorkflowArgs,
   RESERVED_WORKFLOW_NAMES,
-} from "../extensions/ghcp-maestro/runtime/saved-workflows.mjs";
+} from "../core/saved-workflows.mjs";
 
 async function tmp() {
   return mkdtemp(join(tmpdir(), "ghcp-maestro-wf-"));
