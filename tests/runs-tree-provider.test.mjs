@@ -66,6 +66,13 @@ test("rowIcon maps status to a themeable codicon id", () => {
   assert.equal(rowIcon({ kind: "agent", status: "error" }), "error");
 });
 
+test("rowIcon distinguishes aborted/stopped agents from queued ones", () => {
+  const queued = rowIcon({ kind: "agent", status: "queued" });
+  assert.notEqual(rowIcon({ kind: "agent", status: "aborted" }), queued);
+  assert.notEqual(rowIcon({ kind: "agent", status: "stopped" }), queued);
+  assert.notEqual(rowIcon({ kind: "agent", status: "cancelled" }), queued);
+});
+
 test("renderConsoleHtml embeds the snapshot and selected run", () => {
   const html = renderConsoleHtml(SNAPSHOT, { runId: "r1", phase: "explore", agentId: "a1" });
   assert.match(html, /react-to-solid migration/);

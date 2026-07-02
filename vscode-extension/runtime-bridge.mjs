@@ -149,6 +149,14 @@ export function createRuntimeBridge(deps) {
       runOne(sink, runId, EXPLORE_PHASE, spec, controller.signal),
     );
 
+    // User cancelled (via CancellationToken or stopRun): don't run extra work
+    // and don't override the stopped status with complete/error.
+    if (controller.signal.aborted) {
+      sink({ type: "run.finished", runId, payload: { status: "stopped" } });
+      await log?.info?.(`maestro: ${runId} cancelled before synth.`);
+      return { runId, status: "stopped" };
+    }
+
     // Optional synth phase.
     if (synthesize && results.length) {
       const synthSpec = { id: "synth", agent: "synth", prompt: "synthesize", model: specs[0]?.model };

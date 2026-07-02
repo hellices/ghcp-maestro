@@ -13,7 +13,7 @@
 //   run.finished   { runId, payload?: { status } }
 
 const DONE_STATUSES = new Set(["ok", "complete", "done", "success"]);
-const FAILED_STATUSES = new Set(["error", "failed", "timeout"]);
+const FAILED_STATUSES = new Set(["error", "failed", "timeout", "aborted", "stopped", "cancelled", "canceled"]);
 
 function newAgent(agentId) {
   return {

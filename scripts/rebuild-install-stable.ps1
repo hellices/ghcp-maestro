@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Continue'
-$src = "c:\Users\inhwanhwang\vscode\ghcp-maestro"
+# Repo root is the parent of this script's folder (scripts/), not a hard-coded path.
+$src = Split-Path -Parent $PSScriptRoot
 $stage = "$env:TEMP\ghcp-maestro-pkg"
 $utf8 = New-Object Text.UTF8Encoding $false
 
@@ -60,5 +61,10 @@ try {
     Pop-Location
 }
 
-# Install
-& "C:\Users\inhwanhwang\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd" --install-extension "$stage\ghcp-maestro-vscode-0.1.0.vsix" --force 2>&1 | Select-Object -Last 3
+# Install using the `code` CLI from PATH (falls back to code.cmd), not a hard-coded install path.
+$codeCli = (Get-Command code.cmd, code -ErrorAction SilentlyContinue | Select-Object -First 1)
+if (-not $codeCli) {
+    Write-Warning "VS Code CLI ('code') not found on PATH; skipping install. Enable it via 'Shell Command: Install code command in PATH'."
+} else {
+    & $codeCli.Source --install-extension "$stage\ghcp-maestro-vscode-0.1.0.vsix" --force 2>&1 | Select-Object -Last 3
+}

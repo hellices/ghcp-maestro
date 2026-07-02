@@ -116,3 +116,23 @@ test("workflows subcommand lists discovered workflows without fanning out", asyn
   await bridge.runCommand({ subcommand: "workflows", args: "" });
   assert.ok(logs.join("\n").includes("deep-review"));
 });
+
+test("cancelled run skips the synth phase and finishes as stopped, not complete", async () => {
+  let cancel;
+  const { deps, events } = fakeDeps({
+    synthesize: async () => assert.fail("synth must not run after cancellation"),
+    runAgent: async (spec) => {
+      if (spec.id === "a1" && cancel) cancel(); // user hits stop mid fan-out
+      return { id: spec.id, spec, status: "ok", output: { text: `out-${spec.id}` }, startedAt: 1, finishedAt: 2 };
+    },
+  });
+  const bridge = createRuntimeBridge(deps);
+  const ctx = { cancellation: { onCancel: (cb) => { cancel = cb; } } };
+  const res = await bridge.runCommand({ subcommand: "task", args: "x" }, ctx);
+
+  assert.ok(!events.some((e) => e.type === "phase.started" && e.phase === "synth"));
+  assert.ok(!events.some((e) => e.type === "agent.started" && e.agentId === "synth"));
+  const finals = events.filter((e) => e.type === "run.finished");
+  assert.equal(finals[finals.length - 1].payload.status, "stopped");
+  assert.equal(res.status, "stopped");
+});

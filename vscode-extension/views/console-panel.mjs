@@ -8,7 +8,19 @@
 
 /** Serialise state for safe embedding inside a <script> tag. */
 function embedJson(value) {
-  return JSON.stringify(value ?? null).replace(/</g, "\\u003c");
+  // `<` guards against a data-driven `</script>` breakout; U+2028/U+2029 are legal
+  // in JSON but are JS line terminators inside a <script>, so escape them too.
+  return JSON.stringify(value ?? null)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/** Cryptographically-strong nonce for the webview CSP (hex, no import needed). */
+function makeNonce() {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -18,6 +30,7 @@ function embedJson(value) {
  */
 export function renderConsoleHtml(snapshot, selection = {}) {
   const state = embedJson({ snapshot: snapshot ?? { runs: [] }, selection: selection ?? {} });
+  const nonce = makeNonce();
   const heading =
     snapshot?.runs?.length ? snapshot.runs[0].task || snapshot.runs[0].id : "No runs yet";
 
@@ -25,7 +38,7 @@ export function renderConsoleHtml(snapshot, selection = {}) {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <title>Maestro Run Console</title>
 <style>
   :root { color-scheme: dark light; }
@@ -97,13 +110,13 @@ export function renderConsoleHtml(snapshot, selection = {}) {
   <div class="col" id="agents"><h3>Agents</h3><div id="agents-body"></div></div>
   <div class="col" id="detail"><h3>Infrastructure</h3><div id="detail-body"><div class="empty">Select an agent.</div></div></div>
 </div>
-<script>window.__MAESTRO_STATE__ = ${state};</script>
-<script>
+<script nonce="${nonce}">window.__MAESTRO_STATE__ = ${state};</script>
+<script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   let state = window.__MAESTRO_STATE__ || { snapshot: { runs: [] }, selection: {} };
 
   function statusClass(s) { return (s || "").toLowerCase(); }
-  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;" }[c])); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
   function fmtDur(ms) { if (ms == null) return "—"; return ms < 1000 ? ms + "ms" : (ms/1000).toFixed(1) + "s"; }
 
   function currentRun() {

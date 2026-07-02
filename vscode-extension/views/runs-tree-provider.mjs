@@ -99,6 +99,10 @@ const STATUS_ICONS = {
   queued: "circle-outline",
   error: "error",
   failed: "error",
+  aborted: "circle-slash",
+  stopped: "circle-slash",
+  cancelled: "circle-slash",
+  canceled: "circle-slash",
   timeout: "warning",
   unknown: "question",
 };

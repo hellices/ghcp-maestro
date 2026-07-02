@@ -77,6 +77,17 @@ test("per-phase counts summarise total/done/failed/running", () => {
   assert.deepEqual(phase.counts, { total: 3, done: 1, failed: 1, running: 1 });
 });
 
+test("aborted agents count as terminal so done+failed+running equals total", () => {
+  const vm = createRunViewModel();
+  vm.apply({ type: "agent.started", runId: "r1", phase: "explore", agentId: "a1" });
+  vm.apply({ type: "agent.finished", runId: "r1", phase: "explore", agentId: "a1", payload: { status: "ok" } });
+  vm.apply({ type: "agent.started", runId: "r1", phase: "explore", agentId: "a2" });
+  vm.apply({ type: "agent.finished", runId: "r1", phase: "explore", agentId: "a2", payload: { status: "aborted" } });
+  const c = vm.snapshot().runs[0].phases[0].counts;
+  assert.equal(c.done + c.failed + c.running, c.total);
+  assert.deepEqual(c, { total: 2, done: 1, failed: 1, running: 0 });
+});
+
 test("agent.finished with an unrecognised status falls back to unknown", () => {
   const vm = createRunViewModel();
   vm.apply({ type: "agent.started", runId: "r1", phase: "explore", agentId: "a1" });
