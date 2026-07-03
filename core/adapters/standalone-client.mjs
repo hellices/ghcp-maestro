@@ -14,6 +14,26 @@
 
 import { extractText } from "./reply-text.mjs";
 
+function describeReplyShape(reply) {
+  if (reply === null || reply === undefined) return String(reply);
+  if (typeof reply !== "object") return typeof reply;
+  const topKeys = Object.keys(reply);
+  const dataKeys = reply.data && typeof reply.data === "object" ? Object.keys(reply.data) : null;
+  const contentType = Array.isArray(reply.data?.content)
+    ? `array(${reply.data.content.length})`
+    : typeof reply.data?.content;
+  return `{top:[${topKeys.join(",")}]${dataKeys ? ` data:[${dataKeys.join(",")}] content:${contentType}` : ""}}`;
+}
+
+function previewJson(value, max) {
+  try {
+    const s = JSON.stringify(value, (_k, v) => (typeof v === "function" ? "[fn]" : v));
+    return s && s.length > max ? `${s.slice(0, max)}…` : s ?? String(value);
+  } catch (err) {
+    return `<unserializable: ${err?.message ?? err}>`;
+  }
+}
+
 /**
  * @typedef {import("../spawn.mjs").SubagentAdapter} SubagentAdapter
  * @typedef {import("../spawn.mjs").AgentSpec} AgentSpec
@@ -87,14 +107,26 @@ export function createStandaloneClientAdapter(deps = {}) {
         if (ctx?.signal?.aborted) {
           throw ctx.signal.reason ?? new Error("aborted");
         }
+        await logger?.info?.(
+          `standalone-client: sending prompt (agent=${spec.agent ?? "?"} model=${spec.model ?? defaultModel ?? "?"} promptLen=${spec.prompt?.length ?? 0} timeoutMs=${spec.timeoutMs ?? 60_000})`,
+        );
         const reply = await childSession.sendAndWait(
           { prompt: spec.prompt },
           spec.timeoutMs ?? 60_000,
         );
+        const text = extractText(reply);
+        await logger?.info?.(
+          `standalone-client: reply shape=${describeReplyShape(reply)} extractedTextLen=${text.length}`,
+        );
+        if (!text) {
+          await logger?.warn?.(
+            `standalone-client: reply had no extractable text — raw preview: ${previewJson(reply, 400)}`,
+          );
+        }
         return {
           agent: spec.agent ?? null,
           sessionId: childSession.sessionId,
-          text: extractText(reply),
+          text,
         };
       } finally {
         try {

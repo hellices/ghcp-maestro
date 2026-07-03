@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   createSemaphore,
   runWithConcurrency,
-} from "../extensions/ghcp-maestro/runtime/concurrency.mjs";
+} from "../core/concurrency.mjs";
 
 test("createSemaphore rejects non-positive permits", () => {
   assert.throws(() => createSemaphore(0), TypeError);

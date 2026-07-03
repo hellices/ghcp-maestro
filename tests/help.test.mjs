@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderMaestroHelp, DIAGNOSTICS_HEADER } from "../extensions/ghcp-maestro/runtime/help.mjs";
+import { renderMaestroHelp, DIAGNOSTICS_HEADER } from "../core/help.mjs";
 
 const SUBCOMMANDS = [
   { name: "task", needsArg: "task description", summary: "Decompose a task." },

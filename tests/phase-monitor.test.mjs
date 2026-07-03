@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startPhaseMonitor } from "../extensions/ghcp-maestro/runtime/phase-monitor.mjs";
+import { startPhaseMonitor } from "../core/phase-monitor.mjs";
 
 function fakeRun() {
   const writes = [];

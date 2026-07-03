@@ -1,0 +1,107 @@
+{
+  "name": "ghcp-maestro-vscode",
+  "displayName": "ghcp-maestro",
+  "description": "Multi-agent workflow runtime for VS Code — /maestro chat participant with a TUI-like run console and per-agent drill-down. Shares the ghcp-maestro runtime core.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.94.0",
+    "node": ">=20"
+  },
+  "categories": ["AI", "Chat", "Other"],
+  "main": "./extension.mjs",
+  "activationEvents": [],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "ghcp-maestro.workflow",
+        "name": "maestro",
+        "fullName": "ghcp-maestro",
+        "description": "Decompose a task, fan out isolated agents in parallel, watch them in the Maestro views.",
+        "isSticky": true,
+        "commands": [
+          { "name": "task", "description": "Decompose a natural-language task and fan out subtasks" },
+          { "name": "brainstorm", "description": "Brainstorm a topic from multiple lenses in parallel" },
+          { "name": "run", "description": "Run a saved workflow by name" },
+          { "name": "workflows", "description": "List discovered saved workflows" }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "maestro",
+          "title": "Maestro",
+          "icon": "media/maestro.svg"
+        }
+      ]
+    },
+    "views": {
+      "maestro": [
+        {
+          "id": "maestroRuns",
+          "name": "Runs",
+          "contextualTitle": "Maestro"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ghcp-maestro.openConsole",
+        "title": "Maestro: Open Run Console",
+        "icon": "$(window)"
+      },
+      {
+        "command": "ghcp-maestro.retryAgent",
+        "title": "Maestro: Retry Agent",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ghcp-maestro.openConsole",
+          "when": "view == maestroRuns",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ghcp-maestro.retryAgent",
+          "when": "view == maestroRuns && viewItem == agent",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Maestro",
+      "properties": {
+        "maestro.copilotPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the Copilot CLI binary used to spawn isolated agent sessions. Required on the VS Code surface because `process.execPath` is the VS Code Electron runtime, not Copilot. Leave empty to use the `COPILOT_CLI_PATH` environment variable."
+        },
+        "maestro.model": {
+          "type": "string",
+          "default": "claude-sonnet-4.5",
+          "markdownDescription": "Copilot model ID used for the planner and every fan-out agent (unless a saved workflow overrides per-spec). Must be a model your Copilot account has access to (e.g. `claude-sonnet-4.5`, `claude-haiku-4.5`, `gpt-5.2`, `gpt-4o`). Empty falls back to the SDK default."
+        },
+        "maestro.planTimeoutMs": {
+          "type": "number",
+          "default": 180000,
+          "minimum": 1000,
+          "markdownDescription": "Timeout (ms) for the planner call that decomposes a task into subtasks. Default 180000 (3 min)."
+        },
+        "maestro.agentTimeoutMs": {
+          "type": "number",
+          "default": 600000,
+          "minimum": 1000,
+          "markdownDescription": "Timeout (ms) for each fan-out agent's `session.idle` wait. Default 600000 (10 min). Raise if you see `Timeout after Nms waiting for session.idle`."
+        }
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@ import {
   buildPlanPrompt,
   sanitizeAgentName,
   MAX_AGENT_ID_LEN,
-} from "../extensions/ghcp-maestro/runtime/plan.mjs";
+} from "../core/plan.mjs";
 
 const VALID = JSON.stringify([
   { agent: "a", prompt: "do a" },
