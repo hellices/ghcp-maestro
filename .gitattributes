@@ -13,9 +13,12 @@
 /docs/REQUIREMENTS.md export-ignore
 /docs/RELEASING.md export-ignore
 /docs/specs/ export-ignore
+/docs/superpowers/ export-ignore
 /tests/ export-ignore
 /eslint.config.mjs export-ignore
 /package-lock.json export-ignore
+/scripts/ export-ignore
+/vscode-extension/ export-ignore
 /.github/workflows/ export-ignore
 /.gitattributes export-ignore
 /.gitignore export-ignore

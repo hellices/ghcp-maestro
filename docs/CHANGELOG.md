@@ -6,6 +6,44 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-03
+
+Adds a VS Code surface alongside the CLI plugin and extracts the runtime into a
+shared, zero-deps `core/` package consumed by both. The CLI behaviour is
+unchanged; the plugin now imports the same core the VS Code extension uses.
+
+### Added
+- **VS Code `/maestro` chat participant** with a TUI-like Run Console (webview)
+  and an Activity Bar Runs tree for per-agent drill-down (model, tokens, tools,
+  timing, prompt/output/error, retry). Ships as a separate VS Code extension
+  (`vscode-extension/`), not part of the CLI plugin archive.
+- **Shared `core/` package** (`@ghcp-maestro/core`): the fan-out, spawn,
+  run-store, saved-workflows, quality, plan/approval, probes, and synth logic —
+  surface-neutral and unit-tested — now imported by both the CLI plugin
+  (`extensions/ghcp-maestro/`) and the VS Code extension.
+
+### Changed
+- **Unified synth + run commands.** `core/synth.mjs` (`buildSynthPrompt`) is the
+  single source for the synthesis prompt across both surfaces; `showRuns` /
+  `resumeRun` / `stopRun` moved into `core/run-commands.mjs`. The CLI reproduces
+  its prior synth prompt and run-listing output byte-for-byte.
+- **Slimmed the CLI extension God-file** (`extensions/ghcp-maestro/extension.mjs`)
+  by extracting run-phase, builtin-workflows, and run-command helpers into core.
+- **Leaner release archive:** `vscode-extension/`, `scripts/`, and design docs
+  under `docs/superpowers/` are `export-ignore`d from the CLI plugin archive.
+
+### Fixed
+- **Run Console webview hardening:** escape `U+2028`/`U+2029` in embedded state
+  (JS line terminators inside `<script>`) and replace the `script-src
+  'unsafe-inline'` CSP with a per-render crypto nonce.
+- **Cancellation is honoured end-to-end:** a stopped run skips the synth phase
+  and finishes as `stopped` instead of being overridden with `complete`/`error`;
+  `aborted`/`stopped`/`cancelled` agents count as terminal and get a distinct
+  tree icon.
+- **Portability:** `scripts/rebuild-install-stable.ps1` derives the repo root
+  from `$PSScriptRoot` and resolves the `code` CLI from `PATH` — no hard-coded,
+  username-leaking absolute paths.
+
 ## [0.5.0] - 2026-06-30
 
 First tagged release. Highlights since the initial scaffold: the M4 dynamic task
