@@ -6,7 +6,7 @@ import {
   dummyAdapter,
   GLOBAL_AGENT_CAP,
   DEFAULT_CONCURRENCY,
-} from "../extensions/ghcp-maestro/runtime/spawn.mjs";
+} from "../core/spawn.mjs";
 
 test("spawn returns ok envelope on success", async () => {
   const r = await spawn(

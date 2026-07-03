@@ -1,0 +1,10 @@
+{
+  "name": "@ghcp-maestro/core",
+  "version": "0.0.0",
+  "description": "Surface-agnostic runtime kernel for ghcp-maestro (shared by the Copilot CLI plugin and the VS Code extension).",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./*.mjs"
+  }
+}

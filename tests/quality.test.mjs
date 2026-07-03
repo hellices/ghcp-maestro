@@ -5,7 +5,7 @@ import {
   multiAngle,
   fixLoop,
   crossCheck,
-} from "../extensions/ghcp-maestro/runtime/quality.mjs";
+} from "../core/quality.mjs";
 
 // A scripted adapter: `fn(spec)` returns the reply text (or throws to simulate
 // an agent failure). Deterministic — no real model involved.

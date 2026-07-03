@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   normalizeChildEvent,
   subscribeProgress,
-} from "../extensions/ghcp-maestro/runtime/adapters/standalone-client.mjs";
+} from "../core/adapters/standalone-client.mjs";
 
 test("normalizeChildEvent maps streaming deltas to bytes", () => {
   const p = normalizeChildEvent({

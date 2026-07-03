@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dispatchEnvTriggers } from "../extensions/ghcp-maestro/runtime/probes.mjs";
+import { dispatchEnvTriggers } from "../core/probes.mjs";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 

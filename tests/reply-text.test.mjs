@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractText } from "../extensions/ghcp-maestro/runtime/adapters/reply-text.mjs";
+import { extractText } from "../core/adapters/reply-text.mjs";
 
 test("extractText returns '' for null/undefined events", () => {
   assert.equal(extractText(null), "");

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMonitor, renderDashboard, renderSummary } from "../extensions/ghcp-maestro/runtime/monitor.mjs";
+import { createMonitor, renderDashboard, renderSummary } from "../core/monitor.mjs";
 
 // Deterministic clock + captured render output.
 function harness(throttleMs = 500) {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { monitorEnabled } from "../extensions/ghcp-maestro/runtime/env-flags.mjs";
+import { monitorEnabled } from "../core/env-flags.mjs";
 
 test("monitoring is on by default", () => {
   assert.equal(monitorEnabled({}), true);

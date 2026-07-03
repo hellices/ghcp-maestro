@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { failRun } from "../extensions/ghcp-maestro/runtime/run-flow.mjs";
+import { failRun } from "../core/run-flow.mjs";
 
 function fakeSession() {
   const logs = [];

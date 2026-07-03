@@ -40,7 +40,7 @@ export default [
     // Runtime + extension code must not touch the console or stdio directly —
     // the extension speaks JSON-RPC over stdout, so a stray write corrupts the
     // protocol. Only session.log() is allowed.
-    files: ["extensions/**/*.mjs"],
+    files: ["core/**/*.mjs", "extensions/**/*.mjs"],
     rules: {
       "no-console": "error",
       "no-restricted-syntax": [
