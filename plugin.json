@@ -1,7 +1,7 @@
 {
   "name": "ghcp-maestro",
   "description": "Multi-agent workflow runtime for GitHub Copilot CLI — auto-decompose a task, fan out isolated child sessions in parallel, synthesise.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "author": { "name": "ghcp-maestro contributors" },
   "license": "MIT",
   "homepage": "https://github.com/hellices/ghcp-maestro",
