@@ -28,7 +28,7 @@ test("CSP forbids inline scripts and only allows the document nonce", () => {
   assert.ok(nonce, "script-src must carry a nonce");
 
   // Every <script> tag must be nonced with that exact value.
-  const scriptTags = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1]);
+  const scriptTags = [...html.matchAll(/<script\b([^>]*)>/gi)].map((m) => m[1]);
   assert.ok(scriptTags.length >= 1);
   for (const attrs of scriptTags) {
     assert.match(attrs, new RegExp(`nonce="${nonce}"`), "every <script> must carry the CSP nonce");

@@ -22,7 +22,7 @@ async function pooled(items, limit, worker) {
     while (true) {
       const i = next++;
       if (i >= items.length) return;
-      results[i] = await worker(items[i], i);
+      results[i] = await worker(items[i]);
     }
   });
   await Promise.all(runners);
