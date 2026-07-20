@@ -27,6 +27,10 @@ Plugin manifest: `plugin.json` (repo root).
 - Workflow scripts use only the injected global API — no direct FS / shell calls.
 - Concurrency: global cap 1000 agents/run, default 16.
 - Before adding a new dependency, check whether it can be done zero-deps first.
+- Test style: assert human-readable log/dashboard lines with `assert.match` on
+  the key tokens (status, ids, counts), not full-string equality — except where
+  the byte shape itself is the contract (LLM prompt inputs like `agentDigest`,
+  cross-surface parity outputs like the synth prompt).
 - When guiding users, state that `copilot --experimental` is required (the
   EXTENSIONS feature flag is experimental).
 
@@ -84,9 +88,15 @@ Phase 6 / **M6 release** plus **M4.x** are done. On top of the M4 task workflow
   `showRuns` / `resumeRun` / `stopRun`) are shared, so both surfaces stay in
   lock-step and `extension.mjs` is a thin composition root.
 - **CI / static analysis** — ESLint flat config + `.github/workflows/ci.yml`
-  (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 77 unit tests.
+  (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 260+ unit tests.
+- **M7 VS Code surface** — `vscode-extension/` chat participant + runs TreeView +
+  console panel over the shared core (`runtime-bridge.mjs` is the surface-neutral
+  orchestrator; `vscode-extension/extension.mjs` is the only vscode-coupled file).
+- **Run cancellation** — `core/run-registry.mjs`: process-local runId →
+  AbortController registry; `/maestro-stop` aborts in-flight agents, `runPhase`
+  wires the registry signal by default.
 
 The runtime is still zero-deps (eslint and friends are devDependencies only).
 
-Next: (optional) M7 VS Code surface, and real-time in-TUI run monitoring (tracked
-as a separate issue).
+Next: real-time in-TUI run monitoring (tracked as a separate issue), release
+polish.

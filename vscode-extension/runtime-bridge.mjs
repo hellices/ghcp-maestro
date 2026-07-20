@@ -5,29 +5,15 @@
 // the planned agents out through an injected `runAgent` (built in the
 // composition root from `spawn` + the standalone-client adapter), and emit the
 // normalised RunUiEvent lifecycle the UI sink/view-model consume. All
-// VS Code-, SDK-, and binary-path concerns are injected, never imported here.
+// VS Code-, SDK-, and binary-path concerns are injected, never imported here —
+// only the shared @ghcp-maestro/core primitives are.
 
-// Fallback fan-out limit when the composition root doesn't inject `concurrency`.
-// The running system sources the real value from core (DEFAULT_CONCURRENCY),
-// passed in via createRuntimeBridge; this literal is only a last-resort default.
-const DEFAULT_CONCURRENCY = 16;
+import { runWithConcurrency } from "../core/concurrency.mjs";
+import { DEFAULT_CONCURRENCY } from "../core/spawn.mjs";
+import { splitWorkflowInvocation } from "../core/saved-workflows.mjs";
+
 const EXPLORE_PHASE = "explore";
 const SYNTH_PHASE = "synth";
-
-/** Minimal promise pool: run `tasks` with at most `limit` in flight, preserving order. */
-async function pooled(items, limit, worker) {
-  const results = new Array(items.length);
-  let next = 0;
-  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (true) {
-      const i = next++;
-      if (i >= items.length) return;
-      results[i] = await worker(items[i]);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
 
 function outputText(result) {
   if (result?.output && typeof result.output === "object" && "text" in result.output) {
@@ -124,10 +110,12 @@ export function createRuntimeBridge(deps) {
     // Resolve the plan (saved workflow or LLM decomposition).
     let plan;
     try {
-      plan =
-        input.subcommand === "run" && loadWorkflow
-          ? await loadWorkflow(...splitName(input.args))
-          : await planTask(input);
+      if (input.subcommand === "run" && loadWorkflow) {
+        const { name, rest } = splitWorkflowInvocation(input.args);
+        plan = await loadWorkflow(name, rest);
+      } else {
+        plan = await planTask(input);
+      }
     } catch (err) {
       sink({ type: "run.started", runId, payload: { task: input.args || input.subcommand } });
       sink({ type: "run.finished", runId, payload: { status: "error", error: err?.message ?? String(err) } });
@@ -145,8 +133,9 @@ export function createRuntimeBridge(deps) {
     sink({ type: "phase.started", runId, phase: EXPLORE_PHASE });
     await log?.info?.(`maestro: ${runId} fanning out ${specs.length} agent(s).`);
 
-    const results = await pooled(specs, concurrency, (spec) =>
-      runOne(sink, runId, EXPLORE_PHASE, spec, controller.signal),
+    const results = await runWithConcurrency(
+      specs.map((spec) => () => runOne(sink, runId, EXPLORE_PHASE, spec, controller.signal)),
+      { concurrency: Math.max(1, concurrency) },
     );
 
     // User cancelled (via CancellationToken or stopRun): don't run extra work
@@ -220,12 +209,4 @@ export function createRuntimeBridge(deps) {
       await runOne(emit, runId, phase, spec, run.controller.signal);
     },
   };
-}
-
-/** Split a saved-workflow invocation "name rest of args" into [name, args]. */
-function splitName(args) {
-  const trimmed = (args ?? "").trim();
-  const sp = trimmed.indexOf(" ");
-  if (sp === -1) return [trimmed, ""];
-  return [trimmed.slice(0, sp), trimmed.slice(sp + 1).trim()];
 }

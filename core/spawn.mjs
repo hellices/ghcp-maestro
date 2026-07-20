@@ -59,7 +59,11 @@ export async function spawn(spec, opts) {
 
   if (runHandle && spec.id) {
     const cached = await runHandle.readAgent(spec.id);
-    if (cached && (cached.status === "ok" || cached.status === "error" || cached.status === "timeout")) {
+    // Only successful results are replayed from cache. Failed/timed-out/aborted
+    // records must re-run on resume — that is the documented /maestro-resume
+    // contract ("already finished agents are served from cache, only the
+    // missing or failed ones rerun").
+    if (cached && cached.status === "ok") {
       return { ...cached, cached: true };
     }
   }

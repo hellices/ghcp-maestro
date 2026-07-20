@@ -13,7 +13,8 @@
 import { DEFAULT_CONCURRENCY } from "./spawn.mjs";
 import { runPhase } from "./run-phase.mjs";
 import { createRun } from "./run-store.mjs";
-import { failRun } from "./run-flow.mjs";
+import { failRun, completeRun } from "./run-flow.mjs";
+import { releaseRun } from "./run-registry.mjs";
 import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName } from "./plan.mjs";
@@ -102,7 +103,7 @@ export function createBuiltinWorkflows(deps) {
       `ghcp-maestro/${runId}: synth status=${synth.status}${synth.cached ? " (cached)" : ""} took=${synth.finishedAt - synth.startedAt}ms wall=${phase2Elapsed}ms reply=${JSON.stringify(synthText.slice(0, 80))}`,
     );
 
-    await run.complete();
+    await completeRun(run);
     await session.log(
       `ghcp-maestro/${runId}: hello workflow complete (${exploreResults.length + 1} agents across 2 phases)`,
     );
@@ -216,7 +217,7 @@ export function createBuiltinWorkflows(deps) {
       );
     }
 
-    await run.complete();
+    await completeRun(run);
     await session.log(
       `ghcp-maestro/${runId}: brainstorm complete — ${results.length + 1} agents across 2 phases (phase1=${phase1Elapsed}ms parallel, phase2=${phase2Elapsed}ms)`,
     );
@@ -321,6 +322,9 @@ export function createBuiltinWorkflows(deps) {
       log: (msg, options) => session.log(`ghcp-maestro/${runId}: ${msg}`, options),
     });
     if (!gate.approved) {
+      // Release first: releaseRun never throws, so the controller can't leak
+      // even if persisting the "stopped" status fails.
+      releaseRun(runId);
       await run.patchManifest({ status: "stopped" });
       await session.log(
         `ghcp-maestro/${runId}: task ${gate.reason === "empty-selection" ? "aborted (no subtasks selected)" : `cancelled by user (${gate.reason})`} — fan-out skipped`,
@@ -392,7 +396,7 @@ export function createBuiltinWorkflows(deps) {
       );
     }
 
-    await run.complete();
+    await completeRun(run);
     await session.log(
       `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
     );

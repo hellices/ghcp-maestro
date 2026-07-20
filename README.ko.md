@@ -115,7 +115,7 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 | `/maestro workflows` | 사용 가능한 저장 워크플로우 목록 |
 | `/maestros [runId]` | 최근 run 목록, 또는 한 run 의 실시간 대시보드 |
 | `/maestro-resume <runId>` | run 재실행; 캐시된 에이전트는 건너뜀 |
-| `/maestro-stop <runId>` | run 을 중지로 표시 |
+| `/maestro-stop <runId>` | run 중지 + 진행 중 에이전트 abort |
 | `/maestro help` | 전체 하위 명령 보기 |
 
 ---

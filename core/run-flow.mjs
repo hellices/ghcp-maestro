@@ -4,6 +4,8 @@
 // log — so they live in their own module and take `session`/`run` explicitly,
 // which keeps them unit-testable with fakes.
 
+import { releaseRun } from "./run-registry.mjs";
+
 /**
  * Mark a run failed, log the reason at error level, and return the run handle so
  * a caller can `return failRun(...)`. Centralises the abort boilerplate every
@@ -13,7 +15,7 @@
  * error message is still logged.
  *
  * @param {{ log: (msg: string, opts?: { level?: string }) => unknown | Promise<unknown> }} session
- * @param {{ patchManifest?: (patch: object) => unknown | Promise<unknown> } | undefined} run
+ * @param {{ patchManifest?: (patch: object) => unknown | Promise<unknown>, runId?: string } | undefined} run
  * @param {string} message
  * @returns {Promise<object | undefined>} the same run handle that was passed in
  */
@@ -25,6 +27,25 @@ export async function failRun(session, run, message) {
   } catch {
     // ignore — fall through to log the original failure
   }
+  if (run?.runId) releaseRun(run.runId);
   await session.log(message, { level: "error" });
   return run;
+}
+
+/**
+ * Mark a run complete and always drop its process-local abort controller —
+ * even when persisting the terminal manifest fails (disk IO error), the
+ * registry entry must not leak for the life of the process. The error itself
+ * still propagates so the caller's failure path (background error log /
+ * failRun) can surface it.
+ *
+ * @param {{ complete: () => unknown | Promise<unknown>, runId?: string }} run
+ * @returns {Promise<void>}
+ */
+export async function completeRun(run) {
+  try {
+    await run.complete();
+  } finally {
+    if (run?.runId) releaseRun(run.runId);
+  }
 }
