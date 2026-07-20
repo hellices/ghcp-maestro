@@ -27,6 +27,10 @@ Plugin manifest: `plugin.json` (repo root).
 - Workflow scripts use only the injected global API — no direct FS / shell calls.
 - Concurrency: global cap 1000 agents/run, default 16.
 - Before adding a new dependency, check whether it can be done zero-deps first.
+- Test style: assert human-readable log/dashboard lines with `assert.match` on
+  the key tokens (status, ids, counts), not full-string equality — except where
+  the byte shape itself is the contract (LLM prompt inputs like `agentDigest`,
+  cross-surface parity outputs like the synth prompt).
 - When guiding users, state that `copilot --experimental` is required (the
   EXTENSIONS feature flag is experimental).
 
