@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   normalizeChildEvent,
   subscribeProgress,
+  raceAbort,
 } from "../core/adapters/standalone-client.mjs";
 
 test("normalizeChildEvent maps streaming deltas to bytes", () => {
@@ -76,4 +77,32 @@ test("a throwing onProgress never escapes the event handler", () => {
   const fakeSession = { on(h) { handler = h; return () => {}; } };
   subscribeProgress(fakeSession, () => { throw new Error("boom"); });
   assert.doesNotThrow(() => handler({ type: "assistant.turn_start" }));
+});
+
+test("raceAbort passes through resolution/rejection when the signal never fires", async () => {
+  const ac = new AbortController();
+  assert.equal(await raceAbort(Promise.resolve(42), ac.signal), 42);
+  await assert.rejects(() => raceAbort(Promise.reject(new Error("inner")), ac.signal), /inner/);
+  assert.equal(await raceAbort(Promise.resolve("nosig"), undefined), "nosig");
+});
+
+test("raceAbort rejects with the abort reason while the reply is still pending", async () => {
+  const ac = new AbortController();
+  const pending = new Promise(() => {}); // never settles — simulates in-flight sendAndWait
+  const raced = raceAbort(pending, ac.signal);
+  const reason = new Error("agent timed out after 5ms");
+  reason.name = "TimeoutError";
+  ac.abort(reason);
+  await assert.rejects(() => raced, /agent timed out after 5ms/);
+});
+
+test("raceAbort rejects immediately on an already-aborted signal and swallows the loser", async () => {
+  const ac = new AbortController();
+  ac.abort(new Error("pre-aborted"));
+  let rejectLoser;
+  const loser = new Promise((_res, rej) => { rejectLoser = rej; });
+  await assert.rejects(() => raceAbort(loser, ac.signal), /pre-aborted/);
+  // The detached loser rejection must not surface as an unhandled rejection.
+  rejectLoser(new Error("late loser"));
+  await new Promise((r) => setTimeout(r, 0));
 });

@@ -123,7 +123,7 @@ it as its own command (e.g. a deep code review you run on every branch):
 | `/maestro workflows` | List the saved workflows available to you |
 | `/maestros [runId]` | List recent runs, or show one run's live dashboard |
 | `/maestro-resume <runId>` | Resume a run; cached agents are skipped |
-| `/maestro-stop <runId>` | Mark a run as stopped |
+| `/maestro-stop <runId>` | Stop a run and abort its in-flight agents |
 | `/maestro help` | List every subcommand |
 
 ---

@@ -14,6 +14,7 @@ import { DEFAULT_CONCURRENCY } from "./spawn.mjs";
 import { runPhase } from "./run-phase.mjs";
 import { createRun } from "./run-store.mjs";
 import { failRun } from "./run-flow.mjs";
+import { releaseRun } from "./run-registry.mjs";
 import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName } from "./plan.mjs";
@@ -103,6 +104,7 @@ export function createBuiltinWorkflows(deps) {
     );
 
     await run.complete();
+    releaseRun(runId);
     await session.log(
       `ghcp-maestro/${runId}: hello workflow complete (${exploreResults.length + 1} agents across 2 phases)`,
     );
@@ -217,6 +219,7 @@ export function createBuiltinWorkflows(deps) {
     }
 
     await run.complete();
+    releaseRun(runId);
     await session.log(
       `ghcp-maestro/${runId}: brainstorm complete — ${results.length + 1} agents across 2 phases (phase1=${phase1Elapsed}ms parallel, phase2=${phase2Elapsed}ms)`,
     );
@@ -322,6 +325,7 @@ export function createBuiltinWorkflows(deps) {
     });
     if (!gate.approved) {
       await run.patchManifest({ status: "stopped" });
+      releaseRun(runId);
       await session.log(
         `ghcp-maestro/${runId}: task ${gate.reason === "empty-selection" ? "aborted (no subtasks selected)" : `cancelled by user (${gate.reason})`} — fan-out skipped`,
         { level: "warning" },
@@ -393,6 +397,7 @@ export function createBuiltinWorkflows(deps) {
     }
 
     await run.complete();
+    releaseRun(runId);
     await session.log(
       `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
     );

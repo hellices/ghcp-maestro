@@ -208,6 +208,41 @@ test("spawn with runHandle persists and reuses cached results", async () => {
   }
 });
 
+test("spawn re-runs cached failed/timeout records on resume (only ok replays)", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "wf", baseDir });
+    let calls = 0;
+    let failing = true;
+    const flaky = {
+      name: "flaky",
+      async invoke(spec) {
+        calls += 1;
+        if (failing) throw new Error("boom");
+        return { echo: spec.prompt };
+      },
+    };
+    const spec = { id: "one", prompt: "a" };
+    const first = await spawnAll([spec], { adapter: flaky, runHandle: run });
+    assert.equal(first[0].status, "error");
+    assert.equal(calls, 1);
+
+    // Resume: the cached error record must NOT be replayed — the agent reruns.
+    failing = false;
+    const second = await spawnAll([spec], { adapter: flaky, runHandle: run });
+    assert.equal(calls, 2, "failed record must re-invoke the adapter");
+    assert.equal(second[0].status, "ok");
+    assert.notEqual(second[0].cached, true);
+
+    // Third pass: now the ok record IS served from cache.
+    const third = await spawnAll([spec], { adapter: flaky, runHandle: run });
+    assert.equal(calls, 2, "ok record must be served from cache");
+    assert.equal(third[0].cached, true);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 test("spawn without spec.id ignores cache", async () => {
   const baseDir = await freshBase();
   try {

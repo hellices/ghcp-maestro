@@ -158,10 +158,27 @@ test("stopRun patches the manifest to stopped with a finish timestamp", async ()
   const patches = [];
   await stopRun(session, "r1", {
     openRun: async () => ({ patchManifest: async (p) => patches.push(p) }),
+    abortRun: () => false,
     now: () => 123,
   });
   assert.deepEqual(patches, [{ status: "stopped", finishedAt: 123 }]);
   assert.match(session.logs[0].msg, /marked r1 as stopped/);
+  assert.match(session.logs[0].msg, /no in-flight agents owned by this process/);
+});
+
+test("stopRun aborts the run's in-flight agents when this process owns them", async () => {
+  const session = fakeSession();
+  const abortedIds = [];
+  await stopRun(session, "r1", {
+    openRun: async () => ({ patchManifest: async () => {} }),
+    abortRun: (id) => {
+      abortedIds.push(id);
+      return true;
+    },
+    now: () => 123,
+  });
+  assert.deepEqual(abortedIds, ["r1"]);
+  assert.match(session.logs[0].msg, /signalled its in-flight agents to abort/);
 });
 
 test("stopRun surfaces openRun failure at error level", async () => {

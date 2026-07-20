@@ -22,6 +22,7 @@
 
 import { spawnAll as defaultSpawnAll } from "./spawn.mjs";
 import { startPhaseMonitor as defaultStartPhaseMonitor } from "./phase-monitor.mjs";
+import { ensureRunController as defaultEnsureRunController } from "./run-registry.mjs";
 
 /**
  * Run one workflow phase end-to-end: seed the phase monitor, fan the specs out
@@ -40,6 +41,7 @@ import { startPhaseMonitor as defaultStartPhaseMonitor } from "./phase-monitor.m
  *   now?: () => number,
  *   spawnAll?: typeof defaultSpawnAll,
  *   startPhaseMonitor?: typeof defaultStartPhaseMonitor,
+ *   ensureRunController?: typeof defaultEnsureRunController,
  * }} opts
  * @returns {Promise<{ results: import("./spawn.mjs").AgentResult[], elapsedMs: number }>}
  */
@@ -54,14 +56,20 @@ export async function runPhase(specs, opts) {
     now = Date.now,
     spawnAll = defaultSpawnAll,
     startPhaseMonitor = defaultStartPhaseMonitor,
+    ensureRunController = defaultEnsureRunController,
   } = opts;
+
+  // When the caller doesn't manage its own AbortSignal (the CLI workflows),
+  // fall back to the run's process-local controller so /maestro-stop can abort
+  // in-flight agents and prevent later phases of the same run from starting.
+  const effectiveSignal = signal ?? (runId ? ensureRunController(runId).signal : undefined);
 
   const monitor = startPhaseMonitor({ runId, run, phase, specs });
   const startedAt = now();
   const results = await spawnAll(specs, {
     adapter,
     runHandle: run,
-    ...(signal !== undefined ? { signal } : {}),
+    ...(effectiveSignal !== undefined ? { signal: effectiveSignal } : {}),
     ...(concurrency !== undefined ? { concurrency } : {}),
     onProgress: monitor ? (e) => monitor.onProgress(e) : undefined,
   });

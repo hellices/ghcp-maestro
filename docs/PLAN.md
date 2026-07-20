@@ -331,8 +331,8 @@ Release (after M5):
 
 ## Next immediate actions
 
-Phase 5 / M5 + Phase 6 / M6 + Phase 6.x / M4.x + CI complete. Next:
+Phase 5 / M5 + Phase 6 / M6 + Phase 6.x / M4.x + CI + **M7 VS Code surface**
+(`vscode-extension/`, PR #12) complete. Next:
 
-1. **M7** VS Code surface — separate `vscode-extension/` package, chat participant + TreeView
-2. **Real-time in-TUI run monitoring** — surface live fan-out progress in the host TUI (tracked as a separate issue; spec in `docs/specs/`)
-3. **Release preparation** — `marketplace.json`, verify `copilot plugin install` flow, demo guide, security review
+1. **Real-time in-TUI run monitoring** — surface live fan-out progress in the host TUI (tracked as a separate issue; spec in `docs/specs/`)
+2. **Release preparation** — verify `copilot plugin install` flow, demo guide, security review

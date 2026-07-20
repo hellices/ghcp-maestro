@@ -11,6 +11,7 @@
 import { listRuns as realListRuns, readRunProgress as realReadRunProgress, openRun as realOpenRun, defaultBaseDir as realDefaultBaseDir } from "./run-store.mjs";
 import { renderDashboard as realRenderDashboard, renderSummary as realRenderSummary } from "./monitor.mjs";
 import { failRun as realFailRun } from "./run-flow.mjs";
+import { abortRun as realAbortRun } from "./run-registry.mjs";
 
 const RECENT_RUNS_LIMIT = 20;
 
@@ -125,14 +126,17 @@ export async function resumeRun(session, runId, deps) {
 }
 
 /**
- * Mark a run as stopped (does not kill in-flight agents).
+ * Mark a run as stopped. When this process owns the run's AbortController
+ * (i.e. the run was started here), its in-flight agents are aborted too;
+ * otherwise the stop is manifest-only and in-flight agents in other processes
+ * are unaffected.
  *
  * @param {{ log: (msg: string, opts?: { level?: string }) => unknown | Promise<unknown> }} session
  * @param {string} runId
- * @param {{ openRun?: typeof realOpenRun, now?: () => number }} [deps]
+ * @param {{ openRun?: typeof realOpenRun, abortRun?: typeof realAbortRun, now?: () => number }} [deps]
  */
 export async function stopRun(session, runId, deps = {}) {
-  const { openRun = realOpenRun, now = () => Date.now() } = deps;
+  const { openRun = realOpenRun, abortRun = realAbortRun, now = () => Date.now() } = deps;
   const id = (runId ?? "").trim();
   if (!id) {
     await session.log("ghcp-maestro: /maestro-stop requires a run id", { level: "warning" });
@@ -141,7 +145,10 @@ export async function stopRun(session, runId, deps = {}) {
   try {
     const run = await openRun(id);
     await run.patchManifest({ status: "stopped", finishedAt: now() });
-    await session.log(`ghcp-maestro: marked ${id} as stopped`);
+    const aborted = abortRun(id);
+    await session.log(
+      `ghcp-maestro: marked ${id} as stopped${aborted ? " and signalled its in-flight agents to abort" : " (no in-flight agents owned by this process)"}`,
+    );
   } catch (err) {
     await session.log(`ghcp-maestro: cannot stop '${id}': ${err?.message ?? err}`, {
       level: "error",
