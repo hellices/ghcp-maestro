@@ -10,12 +10,29 @@ import {
   loadSavedWorkflow,
   buildWorkflowApi,
   parseWorkflowArgs,
+  splitWorkflowInvocation,
   RESERVED_WORKFLOW_NAMES,
 } from "../core/saved-workflows.mjs";
 
 async function tmp() {
   return mkdtemp(join(tmpdir(), "ghcp-maestro-wf-"));
 }
+
+// ── splitWorkflowInvocation ─────────────────────────────────────────────────
+
+test("splitWorkflowInvocation splits '<name> [args]' and tolerates blanks", () => {
+  assert.deepEqual(splitWorkflowInvocation("deep-review"), { name: "deep-review", rest: "" });
+  assert.deepEqual(
+    splitWorkflowInvocation('deep-review {"topic":"x"} '),
+    { name: "deep-review", rest: '{"topic":"x"}' },
+  );
+  assert.deepEqual(splitWorkflowInvocation("  spaced  plain text  "), {
+    name: "spaced",
+    rest: "plain text",
+  });
+  assert.deepEqual(splitWorkflowInvocation(""), { name: "", rest: "" });
+  assert.deepEqual(splitWorkflowInvocation(undefined), { name: "", rest: "" });
+});
 
 // ── validateWorkflowName ────────────────────────────────────────────────────
 

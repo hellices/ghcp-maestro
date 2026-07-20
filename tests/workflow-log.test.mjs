@@ -51,10 +51,10 @@ test("exploreResultLine truncates preview to 100 chars and reply to 40", () => {
 });
 
 test("wallClockLine reports the parallel phase wall-clock", () => {
-  assert.equal(
-    wallClockLine("run1", 6805, 3),
-    "ghcp-maestro/run1: phase=explore wall-clock=6805ms (parallel of 3)",
-  );
+  const line = wallClockLine("run1", 6805, 3);
+  assert.match(line, /^ghcp-maestro\/run1: /);
+  assert.match(line, /wall-clock=6805ms/);
+  assert.match(line, /parallel of 3/);
 });
 
 test("fanoutFailureSummary lists failed agents with their status", () => {
@@ -76,6 +76,9 @@ test("allFailed is true only when every result is non-ok", () => {
   assert.equal(allFailed([]), false);
 });
 
+// agentDigest keeps exact-equality assertions on purpose: its output is fed
+// verbatim into the synth prompt, so the byte shape is a contract (what the
+// LLM sees + resume/cache determinism), not a cosmetic log line.
 test("agentDigest joins per-agent outputs under '## agent' headers", () => {
   const results = [res("tech", "ok", "  point A  "), res("ux", "ok", "point B")];
   const digest = agentDigest(results);
@@ -89,15 +92,17 @@ test("agentDigest uses a placeholder for empty output", () => {
 
 test("exploreFullDumpLine dumps the trimmed full output under a FULL header", () => {
   const line = exploreFullDumpLine("run1", res("tech", "ok", "  full body  "));
-  assert.equal(line, "ghcp-maestro/run1: explore/tech FULL ↓\nfull body");
+  assert.match(line, /run1.*explore\/tech.*FULL/);
+  assert.match(line, /\nfull body$/); // trimmed, dumped verbatim after the header
 });
 
 test("exploreFullDumpLine falls back to (empty) only for null/undefined output", () => {
   const missing = exploreFullDumpLine("run1", { spec: { agent: "tech" }, output: {} });
-  assert.equal(missing, "ghcp-maestro/run1: explore/tech FULL ↓\n(empty)");
+  assert.match(missing, /\n\(empty\)$/);
   // An explicit empty string stays empty (matches the pre-refactor behaviour).
   const blank = exploreFullDumpLine("run1", res("tech", "ok", ""));
-  assert.equal(blank, "ghcp-maestro/run1: explore/tech FULL ↓\n");
+  assert.match(blank, /\n$/);
+  assert.doesNotMatch(blank, /\(empty\)/);
 });
 
 test("logExploreResults emits preview, wall-clock and FULL dump in order (no failures)", async () => {
@@ -137,32 +142,33 @@ test("logExploreResults appends a warning-level failure summary when some agents
 });
 
 test("labeledDumpLine dumps trimmed output under a custom label header", () => {
-  assert.equal(
-    labeledDumpLine("run1", "FINAL ANSWER", res("synth", "ok", "  the answer  ")),
-    "ghcp-maestro/run1: FINAL ANSWER ↓\nthe answer",
-  );
-  assert.equal(
-    labeledDumpLine("run1", "TOP 3 NEXT STEPS", res("synth", "ok", "a\nb\nc")),
-    "ghcp-maestro/run1: TOP 3 NEXT STEPS ↓\na\nb\nc",
-  );
+  const answer = labeledDumpLine("run1", "FINAL ANSWER", res("synth", "ok", "  the answer  "));
+  assert.match(answer, /run1.*FINAL ANSWER/);
+  assert.match(answer, /\nthe answer$/);
+  const steps = labeledDumpLine("run1", "TOP 3 NEXT STEPS", res("synth", "ok", "a\nb\nc"));
+  assert.match(steps, /TOP 3 NEXT STEPS/);
+  assert.match(steps, /\na\nb\nc$/);
 });
 
 test("labeledDumpLine falls back to (empty) only for missing output", () => {
-  assert.equal(
-    labeledDumpLine("run1", "FINAL ANSWER", { spec: { agent: "synth" }, output: {} }),
-    "ghcp-maestro/run1: FINAL ANSWER ↓\n(empty)",
-  );
+  const line = labeledDumpLine("run1", "FINAL ANSWER", { spec: { agent: "synth" }, output: {} });
+  assert.match(line, /\n\(empty\)$/);
 });
 
 test("synthStatusLine renders the brainstorm variant (no wall)", () => {
   const r = res("synth", "ok", "x", { startedAt: 0, finishedAt: 1500 });
-  assert.equal(synthStatusLine("run1", r), "ghcp-maestro/run1: synth status=ok took=1500ms");
+  const line = synthStatusLine("run1", r);
+  assert.match(line, /synth status=ok/);
+  assert.match(line, /took=1500ms/);
+  assert.doesNotMatch(line, /wall=/);
+  assert.doesNotMatch(line, /\(cached\)/);
 });
 
 test("synthStatusLine renders the task variant (with wall) and cached tag", () => {
   const r = res("synth", "ok", "x", { startedAt: 0, finishedAt: 1500, cached: true });
-  assert.equal(
-    synthStatusLine("run1", r, { wallMs: 200 }),
-    "ghcp-maestro/run1: synth status=ok (cached) took=1500ms wall=200ms",
-  );
+  const line = synthStatusLine("run1", r, { wallMs: 200 });
+  assert.match(line, /synth status=ok/);
+  assert.match(line, /\(cached\)/);
+  assert.match(line, /took=1500ms/);
+  assert.match(line, /wall=200ms/);
 });

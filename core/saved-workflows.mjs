@@ -238,11 +238,26 @@ export function buildWorkflowApi(deps) {
 }
 
 /**
+ * Split a `<name> [args]` invocation string (e.g. from `/maestro run`) into the
+ * workflow name and the raw argument remainder. Shared by the CLI and VS Code
+ * surfaces so the parsing can't drift.
+ *
+ * @param {string} [raw] - may be undefined/empty; treated as ""
+ * @returns {{ name: string, rest: string }}
+ */
+export function splitWorkflowInvocation(raw) {
+  const trimmed = (raw ?? "").trim();
+  const spaceIdx = trimmed.indexOf(" ");
+  if (spaceIdx === -1) return { name: trimmed, rest: "" };
+  return { name: trimmed.slice(0, spaceIdx), rest: trimmed.slice(spaceIdx + 1).trim() };
+}
+
+/**
  * Parse the raw argument string passed after a workflow name. If it looks like
  * JSON (`{...}`) it is parsed as structured args; otherwise it is wrapped as
  * `{ input: <string> }` for convenience.
  *
- * @param {string} raw
+ * @param {string} [raw] - may be undefined/empty; treated as ""
  * @returns {object}
  */
 export function parseWorkflowArgs(raw) {

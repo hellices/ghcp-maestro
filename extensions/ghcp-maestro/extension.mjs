@@ -6,7 +6,8 @@ import { DEFAULT_CONCURRENCY } from "../../core/spawn.mjs";
 import { createStandaloneClientAdapter } from "../../core/adapters/standalone-client.mjs";
 import { createRun, openRun } from "../../core/run-store.mjs";
 import { isTruthyEnv } from "../../core/env-flags.mjs";
-import { failRun } from "../../core/run-flow.mjs";
+import { failRun, completeRun } from "../../core/run-flow.mjs";
+import { ensureRunController } from "../../core/run-registry.mjs";
 import { createBuiltinWorkflows } from "../../core/builtin-workflows.mjs";
 import { showRuns, resumeRun, stopRun } from "../../core/run-commands.mjs";
 import {
@@ -21,6 +22,7 @@ import {
   loadSavedWorkflow,
   buildWorkflowApi,
   parseWorkflowArgs,
+  splitWorkflowInvocation,
 } from "../../core/saved-workflows.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -212,7 +214,7 @@ const session = await joinSession({
     },
     {
       name: "maestro-stop",
-      description: "Mark a workflow run as stopped (does not kill in-flight agents).",
+      description: "Stop a workflow run: mark it stopped and abort its in-flight agents (when started in this session).",
       handler: async (ctx) => stopRun(session, ctx?.args ?? ""),
     },
   ],
@@ -309,9 +311,11 @@ dispatchEnvTriggers(
 // --- Saved workflows (M5) ---------------------------------------------------
 
 /**
- * List the saved workflows discovered at startup.
+ * List the saved workflows, rescanning the workflow dirs first so files added
+ * or removed since startup are reflected without restarting the CLI.
  */
 async function listSavedWorkflows(session) {
+  await discoverSavedWorkflows();
   if (SAVED_WORKFLOWS.size === 0) {
     await session.log(
       "ghcp-maestro: no saved workflows found. Drop a <name>.mjs into ./.ghcp-maestro/workflows, ~/.copilot/plugin-data/ghcp-maestro/workflows, or the bundled saved-workflows dir.",
@@ -334,16 +338,18 @@ async function listSavedWorkflows(session) {
  * Parse `<name> [args]` from a /maestro run argument string and dispatch.
  */
 async function runSavedWorkflowCommand(session, arg) {
-  const trimmed = (arg ?? "").trim();
-  const spaceIdx = trimmed.indexOf(" ");
-  const name = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
-  const rest = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+  const { name, rest } = splitWorkflowInvocation(arg);
   if (!name) {
     await session.log(
       "ghcp-maestro: /maestro run requires a workflow name. See /maestro workflows.",
       { level: "warning" },
     );
     return;
+  }
+  if (!SAVED_WORKFLOWS.has(name)) {
+    // The startup scan may be stale (workflow file added since launch) — rescan
+    // once before giving up.
+    await discoverSavedWorkflows();
   }
   if (!SAVED_WORKFLOWS.has(name)) {
     await session.log(
@@ -392,12 +398,15 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
     run,
     args: args ?? {},
     concurrency: DEFAULT_CONCURRENCY,
+    // Wire the run's process-local controller so /maestro-stop aborts the
+    // workflow's spawned agents, matching the built-in workflows.
+    signal: ensureRunController(runId).signal,
     namespace: `${runId}/${name}`,
   });
 
   try {
     await mod.run(api);
-    await run.complete();
+    await completeRun(run);
     await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' complete`);
   } catch (err) {
     await failRun(session, run, `ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`);

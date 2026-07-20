@@ -6,6 +6,28 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+### Fixed
+- **Resume now reruns failed agents.** `spawn` replays only cached `ok` records
+  from the run store; cached `error`/`timeout`/`aborted` records re-invoke the
+  adapter on `/maestro-resume`, matching the documented resume contract
+  (previously a failed agent's cached failure was replayed forever).
+- **In-flight cancellation actually interrupts agents.** The standalone-client
+  adapter races `sendAndWait` against the caller's `AbortSignal` (`raceAbort`),
+  so timeouts and user cancellation no longer wait for the model to finish.
+
+### Changed
+- **`/maestro-stop` aborts in-flight agents.** New `core/run-registry.mjs`
+  (process-local runId → `AbortController`); `runPhase` wires the registry
+  signal by default and `stopRun` aborts it, so stopping a run started in the
+  same session interrupts its agents instead of only flipping the manifest.
+- **`/maestro workflows` rescans the workflow dirs** (and `/maestro run`
+  rescans on a name miss), so workflows added after startup are picked up
+  without restarting the CLI.
+- **VS Code runtime bridge deduplicated against core**: uses
+  `runWithConcurrency` and `DEFAULT_CONCURRENCY` from core instead of local
+  copies; the `<name> [args]` split is shared as
+  `splitWorkflowInvocation` in `core/saved-workflows.mjs`.
+
 ## [0.6.0] - 2026-07-03
 
 Adds a VS Code surface alongside the CLI plugin and extracts the runtime into a

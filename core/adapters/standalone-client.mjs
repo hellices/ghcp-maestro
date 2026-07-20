@@ -110,9 +110,9 @@ export function createStandaloneClientAdapter(deps = {}) {
         await logger?.info?.(
           `standalone-client: sending prompt (agent=${spec.agent ?? "?"} model=${spec.model ?? defaultModel ?? "?"} promptLen=${spec.prompt?.length ?? 0} timeoutMs=${spec.timeoutMs ?? 60_000})`,
         );
-        const reply = await childSession.sendAndWait(
-          { prompt: spec.prompt },
-          spec.timeoutMs ?? 60_000,
+        const reply = await raceAbort(
+          childSession.sendAndWait({ prompt: spec.prompt }, spec.timeoutMs ?? 60_000),
+          ctx?.signal,
         );
         const text = extractText(reply);
         await logger?.info?.(
@@ -206,6 +206,43 @@ export function subscribeProgress(session, onProgress) {
     } catch {
       // monitoring is best-effort; never disturb the child session
     }
+  });
+}
+
+/**
+ * Race a pending reply against an AbortSignal so an in-flight `sendAndWait`
+ * (which takes no signal) is actually interrupted by timeout/cancellation
+ * instead of blocking until the model finishes. On abort the losing reply
+ * promise is detached (its rejection swallowed) — the caller's `finally`
+ * disconnects the child session, which tears the request down.
+ *
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<T>}
+ */
+export function raceAbort(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    promise.catch(() => {});
+    return Promise.reject(signal.reason ?? new Error("aborted"));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      promise.catch(() => {});
+      reject(signal.reason ?? new Error("aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
   });
 }
 
