@@ -142,16 +142,20 @@ export async function stopRun(session, runId, deps = {}) {
     await session.log("ghcp-maestro: /maestro-stop requires a run id", { level: "warning" });
     return;
   }
+  let aborted = false;
   try {
     const run = await openRun(id);
+    // Abort first: stopping the in-flight token burn is the command's primary
+    // effect, so a manifest write failure below must never skip it.
+    aborted = abortRun(id);
     await run.patchManifest({ status: "stopped", finishedAt: now() });
-    const aborted = abortRun(id);
     await session.log(
       `ghcp-maestro: marked ${id} as stopped${aborted ? " and signalled its in-flight agents to abort" : " (no in-flight agents owned by this process)"}`,
     );
   } catch (err) {
-    await session.log(`ghcp-maestro: cannot stop '${id}': ${err?.message ?? err}`, {
-      level: "error",
-    });
+    await session.log(
+      `ghcp-maestro: cannot ${aborted ? "persist stop for" : "stop"} '${id}': ${err?.message ?? err}`,
+      { level: "error" },
+    );
   }
 }

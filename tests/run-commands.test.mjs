@@ -181,6 +181,26 @@ test("stopRun aborts the run's in-flight agents when this process owns them", as
   assert.match(session.logs[0].msg, /signalled its in-flight agents to abort/);
 });
 
+test("stopRun still aborts in-flight agents when the manifest write fails", async () => {
+  const session = fakeSession();
+  const abortedIds = [];
+  await stopRun(session, "r1", {
+    openRun: async () => ({
+      patchManifest: async () => {
+        throw new Error("disk full");
+      },
+    }),
+    abortRun: (id) => {
+      abortedIds.push(id);
+      return true;
+    },
+  });
+  // The abort must land even though persisting "stopped" failed.
+  assert.deepEqual(abortedIds, ["r1"]);
+  assert.equal(session.logs[0].level, "error");
+  assert.match(session.logs[0].msg, /cannot persist stop for 'r1': disk full/);
+});
+
 test("stopRun surfaces openRun failure at error level", async () => {
   const session = fakeSession();
   await stopRun(session, "r1", {
