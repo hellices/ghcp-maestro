@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { failRun } from "../core/run-flow.mjs";
+import { failRun, completeRun } from "../core/run-flow.mjs";
+import { ensureRunController, releaseRun } from "../core/run-registry.mjs";
 
 function fakeSession() {
   const logs = [];
@@ -61,4 +62,37 @@ test("failRun still logs the original error when patchManifest rejects", async (
   const returned = await failRun(session, run, "original failure");
   assert.equal(returned, run);
   assert.deepEqual(logs, [["original failure", { level: "error" }]]);
+});
+
+test("completeRun completes the run and releases its registry controller", async () => {
+  const before = ensureRunController("rf-complete-ok");
+  const calls = [];
+  await completeRun({ runId: "rf-complete-ok", complete: () => calls.push("complete") });
+  assert.deepEqual(calls, ["complete"]);
+  // A fresh controller after the call proves the old entry was released.
+  const after = ensureRunController("rf-complete-ok");
+  assert.notEqual(after, before);
+  releaseRun("rf-complete-ok");
+});
+
+test("completeRun releases the controller even when complete() rejects", async () => {
+  const before = ensureRunController("rf-complete-err");
+  await assert.rejects(
+    () =>
+      completeRun({
+        runId: "rf-complete-err",
+        complete: async () => {
+          throw new Error("disk full");
+        },
+      }),
+    /disk full/,
+  );
+  assert.notEqual(ensureRunController("rf-complete-err"), before);
+  releaseRun("rf-complete-err");
+});
+
+test("completeRun tolerates a run handle without runId", async () => {
+  const calls = [];
+  await completeRun({ complete: () => calls.push("complete") });
+  assert.deepEqual(calls, ["complete"]);
 });

@@ -242,7 +242,7 @@ export function buildWorkflowApi(deps) {
  * workflow name and the raw argument remainder. Shared by the CLI and VS Code
  * surfaces so the parsing can't drift.
  *
- * @param {string} raw
+ * @param {string} [raw] - may be undefined/empty; treated as ""
  * @returns {{ name: string, rest: string }}
  */
 export function splitWorkflowInvocation(raw) {
@@ -257,7 +257,7 @@ export function splitWorkflowInvocation(raw) {
  * JSON (`{...}`) it is parsed as structured args; otherwise it is wrapped as
  * `{ input: <string> }` for convenience.
  *
- * @param {string} raw
+ * @param {string} [raw] - may be undefined/empty; treated as ""
  * @returns {object}
  */
 export function parseWorkflowArgs(raw) {

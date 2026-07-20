@@ -31,3 +31,21 @@ export async function failRun(session, run, message) {
   await session.log(message, { level: "error" });
   return run;
 }
+
+/**
+ * Mark a run complete and always drop its process-local abort controller —
+ * even when persisting the terminal manifest fails (disk IO error), the
+ * registry entry must not leak for the life of the process. The error itself
+ * still propagates so the caller's failure path (background error log /
+ * failRun) can surface it.
+ *
+ * @param {{ complete: () => unknown | Promise<unknown>, runId?: string }} run
+ * @returns {Promise<void>}
+ */
+export async function completeRun(run) {
+  try {
+    await run.complete();
+  } finally {
+    if (run?.runId) releaseRun(run.runId);
+  }
+}

@@ -6,8 +6,8 @@ import { DEFAULT_CONCURRENCY } from "../../core/spawn.mjs";
 import { createStandaloneClientAdapter } from "../../core/adapters/standalone-client.mjs";
 import { createRun, openRun } from "../../core/run-store.mjs";
 import { isTruthyEnv } from "../../core/env-flags.mjs";
-import { failRun } from "../../core/run-flow.mjs";
-import { ensureRunController, releaseRun } from "../../core/run-registry.mjs";
+import { failRun, completeRun } from "../../core/run-flow.mjs";
+import { ensureRunController } from "../../core/run-registry.mjs";
 import { createBuiltinWorkflows } from "../../core/builtin-workflows.mjs";
 import { showRuns, resumeRun, stopRun } from "../../core/run-commands.mjs";
 import {
@@ -406,8 +406,7 @@ async function runSavedWorkflow(session, name, args, opts = {}) {
 
   try {
     await mod.run(api);
-    await run.complete();
-    releaseRun(runId);
+    await completeRun(run);
     await session.log(`ghcp-maestro/${runId}: saved workflow '${name}' complete`);
   } catch (err) {
     await failRun(session, run, `ghcp-maestro/${runId}: saved workflow '${name}' failed: ${err?.message ?? err}`);
