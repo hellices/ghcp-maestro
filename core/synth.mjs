@@ -7,6 +7,7 @@
 // (no IO), so it unit-tests off the SDK.
 
 import { agentDigest } from "./workflow-log.mjs";
+import { UNTRUSTED_NOTICE, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./plan.mjs";
 
 /**
  * Build the synthesis prompt fed to the final synth agent: a fixed instruction
@@ -35,6 +36,11 @@ export function buildSynthPrompt({ task, results }) {
     `Original task: ${task}`,
     "",
     "Subagent outputs:",
+    // Cross-agent injection hardening (#33): subagent text is data, not
+    // instructions — the synth model must not obey directives found inside it.
+    UNTRUSTED_NOTICE,
+    UNTRUSTED_OPEN,
     digest,
+    UNTRUSTED_CLOSE,
   ].join("\n");
 }
