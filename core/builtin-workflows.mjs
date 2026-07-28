@@ -13,7 +13,7 @@
 import { DEFAULT_CONCURRENCY } from "./spawn.mjs";
 import { runPhase } from "./run-phase.mjs";
 import { createRun } from "./run-store.mjs";
-import { failRun, completeRun } from "./run-flow.mjs";
+import { failRun, completeRun, writeRunTrace } from "./run-flow.mjs";
 import { releaseRun } from "./run-registry.mjs";
 import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
@@ -482,6 +482,7 @@ export function createBuiltinWorkflows(deps) {
     if (budget.exceeded()) {
       releaseRun(runId);
       await run.patchManifest({ status: "stopped", tokensUsed: budget.used() });
+      await writeRunTrace(run);
       await session.log(
         `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before synth; finish it later with /maestro-resume ${runId}`,
         { level: "warning" },

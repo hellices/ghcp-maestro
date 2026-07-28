@@ -67,6 +67,16 @@ report is fed to the synth agent so unverified claims aren't presented as
 settled facts. Off by default — it costs one extra agent per run. A failed
 verify agent never fails the run; synthesis proceeds without the report.
 
+**OTel GenAI-style trace export.**
+Every run that reaches a terminal state (complete / stopped / error) writes a
+`trace.json` next to its manifest: one `invoke_workflow` root span plus an
+`invoke_agent` span per agent, using OpenTelemetry GenAI semantic-convention
+attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`,
+`gen_ai.conversation.id`, `gen_ai.usage.total_tokens`, `error.type`). It is an
+OTel-style JSON document, not a full OTLP payload — post-process it into a
+real exporter if you need one. (The upstream GenAI conventions are still in
+Development status, so attribute names may drift.)
+
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final
 answer plus suggested next actions. Failed subtasks are disclosed, not hidden:

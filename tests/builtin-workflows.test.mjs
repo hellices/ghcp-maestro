@@ -358,6 +358,30 @@ test("task workflow survives a failed verify agent and synthesizes without a rep
   });
 });
 
+// --- Trace export (#32) --------------------------------------------------------
+
+test("task workflow writes an OTel GenAI-style trace.json at completion", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const trace = JSON.parse(await readFile(join(run.runDir, "trace.json"), "utf8"));
+    assert.ok(trace.traceId);
+    const root = trace.spans[0];
+    assert.equal(root.attributes["gen_ai.operation.name"], "invoke_workflow");
+    assert.equal(root.attributes["gen_ai.conversation.id"], run.runId);
+    // plan + 3 explore + synth agent spans under the root.
+    const agentSpans = trace.spans.filter(
+      (s) => s.attributes["gen_ai.operation.name"] === "invoke_agent",
+    );
+    assert.equal(agentSpans.length, 5);
+    assert.ok(agentSpans.every((s) => s.parentSpanId === root.spanId));
+  });
+});
+
 test("task workflow reports and persists token usage even without a budget", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();
