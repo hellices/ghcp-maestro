@@ -169,8 +169,27 @@ copilot --experimental
 
 ---
 
+## 알려진 한계
+
+- **`copilot --experimental` 필수.** extensions 표면은 CLI 실험 플래그 뒤에
+  있으며, 없으면 플러그인이 로드되지 않음.
+- **fan-out 은 비용을 배가.** 모든 서브태스크가 실제 자식 Copilot 세션.
+  플랜 게이트의 run-size 추정과 `GHCP_MAESTRO_BUDGET_TOKENS` soft-stop 이
+  있지만 지출은 실제 발생. 작게 시작할 것.
+- **워크플로우는 코드.** 저장/설치된 워크플로우는 세션 권한으로 실행됨.
+  `/maestro install` 은 실행 없이 검증 + 경고하지만, `/maestro run` 전
+  파일 리뷰는 사용자 몫.
+- **플랜 승인 게이트는 인터랙티브 호스트 전용.** elicitation 미지원 호스트
+  (CI, `copilot -p`)는 모든 서브태스크 자동 승인.
+- **`/maestro-stop` 의 in-flight abort 는 run 을 시작한 세션에서만 동작.**
+  다른 세션에서는 stopped 마킹만 되고, 이미 실행 중인 자식 세션은 자체
+  종료까지 진행.
+- **`/maestro install` blob URL 은 `/` 포함 ref 미지원** (예: `feature/x`
+  브랜치) — raw URL 또는 `owner/repo/path@ref` shorthand 사용.
+
 ## 더 알아보기
 
+- [docs/DEMO.md](docs/DEMO.md) — 5분 end-to-end 워크스루
 - [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) — 제품 비전과 요구사항
 - [docs/PLAN.md](docs/PLAN.md) — 마일스톤과 설계 결정
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — 릴리스 이력

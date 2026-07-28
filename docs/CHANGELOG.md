@@ -7,6 +7,13 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **Release polish.** New `docs/DEMO.md` — a five-minute end-to-end
+  `/maestro task` walkthrough with real log-line formats (install → plan gate
+  → parallel explore + `/maestros` dashboard → synth → resume/stop). READMEs
+  gain a **Known limitations** section, the `copilot plugin install` flow was
+  verified end-to-end against the self-served marketplace (0.5.0 → 0.6.0
+  upgrade), and the release-archive file list was re-confirmed lean after the
+  docs reorg. (#24)
 - **`/maestro install <source> [--force]` — one-command workflow install.**
   New `core/workflow-install.mjs`: accepts a github.com blob URL, a
   raw.githubusercontent.com URL, or `owner/repo/path/flow.mjs[@ref]` shorthand

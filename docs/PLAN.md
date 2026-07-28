@@ -322,10 +322,10 @@ At the end of each Phase:
 - [ ] Document known limitations / gaps
 
 Release (after M5):
-- [ ] Create `.github/plugin/marketplace.json`
-- [ ] Test `copilot plugin install ...` flow
-- [ ] License / security review
-- [ ] One demo script (similar to `/deep-research`)
+- [x] Create `.github/plugin/marketplace.json`
+- [x] Test `copilot plugin install ...` flow (verified 0.5.0 → 0.6.0 upgrade via the self-served marketplace)
+- [x] License / security review (MIT license shipped; CodeQL + code-scanning on every PR)
+- [x] One demo script (similar to `/deep-research`) — `docs/DEMO.md`
 
 ---
 

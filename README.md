@@ -224,8 +224,28 @@ logs stream to the **Maestro** output channel.
 
 ---
 
+## Known limitations
+
+- **`copilot --experimental` is required.** The extensions surface is behind
+  the CLI's experimental feature flag; without it the plugin never loads.
+- **Fan-out multiplies cost.** Every subtask is a real child Copilot session.
+  The plan gate shows a run-size estimate, and `GHCP_MAESTRO_BUDGET_TOKENS`
+  soft-stops a run over budget — but the spend is real. Start small.
+- **Workflows are code.** Saved/installed workflows run with your session's
+  permissions. `/maestro install` validates without executing and warns, but
+  reviewing the file before `/maestro run` is on you.
+- **The plan approval gate needs an interactive host.** Hosts without
+  elicitation support (CI, `copilot -p`) auto-approve every subtask.
+- **`/maestro-stop` aborts in-flight agents only from the session that started
+  the run.** From another session it marks the run stopped; already-running
+  child sessions finish on their own.
+- **`/maestro install` blob URLs can't carry a `/` in the ref** (e.g.
+  `feature/x` branches) — use the raw URL or the `owner/repo/path@ref`
+  shorthand instead.
+
 ## Learn more
 
+- [docs/DEMO.md](docs/DEMO.md) — a five-minute end-to-end walkthrough
 - [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) — product vision and requirements
 - [docs/PLAN.md](docs/PLAN.md) — milestones and design decisions
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — release history
