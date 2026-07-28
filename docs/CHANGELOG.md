@@ -16,6 +16,9 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   so timeouts and user cancellation no longer wait for the model to finish.
 
 ### Changed
+- **Design docs consolidated under `docs/specs/`.** The `docs/superpowers/`
+  tree (specs + implementation plans) is gone; all design/plan documents now
+  live in `docs/specs/` and the stale `export-ignore` rule was dropped.
 - **`/maestro-stop` aborts in-flight agents.** New `core/run-registry.mjs`
   (process-local runId → `AbortController`); `runPhase` wires the registry
   signal by default and `stopRun` aborts it, so stopping a run started in the
