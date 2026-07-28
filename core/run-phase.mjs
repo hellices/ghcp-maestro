@@ -38,6 +38,7 @@ import { ensureRunController as defaultEnsureRunController } from "./run-registr
  *   adapter: import("./spawn.mjs").SubagentAdapter,
  *   signal?: AbortSignal,
  *   concurrency?: number,
+ *   budget?: { add: (n: unknown) => void, exceeded: () => boolean },
  *   now?: () => number,
  *   spawnAll?: typeof defaultSpawnAll,
  *   startPhaseMonitor?: typeof defaultStartPhaseMonitor,
@@ -53,6 +54,7 @@ export async function runPhase(specs, opts) {
     adapter,
     signal,
     concurrency,
+    budget,
     now = Date.now,
     spawnAll = defaultSpawnAll,
     startPhaseMonitor = defaultStartPhaseMonitor,
@@ -71,6 +73,7 @@ export async function runPhase(specs, opts) {
     runHandle: run,
     ...(effectiveSignal !== undefined ? { signal: effectiveSignal } : {}),
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(budget !== undefined ? { budget } : {}),
     onProgress: monitor ? (e) => monitor.onProgress(e) : undefined,
   });
   for (const r of results) monitor?.settle(r.spec.id, r.status === "ok");

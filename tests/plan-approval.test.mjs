@@ -165,3 +165,24 @@ test("duplicate agent names are selected independently by a stable key", async (
   assert.deepEqual(field.items.enum, ["0", "1", "2"]);
   assert.deepEqual(field.items.enumNames, ["dup", "solo", "dup"]);
 });
+
+test("an estimate string is shown in the note and the elicitation message", async () => {
+  const notes = [];
+  let captured;
+  const ui = {
+    async elicitation(params) {
+      captured = params;
+      return { action: "accept", content: { subtasks: ["0", "1", "2"] } };
+    },
+  };
+  const res = await planApprovalGate({
+    specs: SPECS,
+    ui,
+    capabilities: INTERACTIVE,
+    estimate: "est. run size: medium (5 agents incl. plan+synth)",
+    log: (msg) => notes.push(msg),
+  });
+  assert.equal(res.approved, true);
+  assert.ok(notes.some((n) => /est\. run size: medium/.test(n)));
+  assert.match(captured.message, /est\. run size: medium/);
+});

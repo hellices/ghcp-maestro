@@ -121,3 +121,21 @@ test("runPhase forwards signal and concurrency to spawnAll", async () => {
   assert.equal(opts.signal, signal);
   assert.equal(opts.concurrency, 4);
 });
+
+test("runPhase forwards the budget tracker to spawnAll", async () => {
+  const budget = { add() {}, exceeded: () => false };
+  let opts = null;
+  await runPhase([{ id: "a", agent: "a" }], {
+    run: {},
+    runId: "r",
+    phase: "explore",
+    adapter: {},
+    budget,
+    startPhaseMonitor: () => null,
+    spawnAll: async (_specs, o) => {
+      opts = o;
+      return [{ spec: { id: "a" }, status: "ok" }];
+    },
+  });
+  assert.equal(opts.budget, budget);
+});

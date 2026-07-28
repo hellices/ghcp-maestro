@@ -23,6 +23,7 @@
  *   ui?: { elicitation: (params: object) => Promise<{ action: string, content?: object }> } | null,
  *   capabilities?: { ui?: { elicitation?: boolean } },
  *   autoApprove?: boolean,
+ *   estimate?: string,
  *   log?: (message: string, options?: object) => Promise<void> | void,
  * }} PlanApprovalOptions
  * @typedef {{ approved: boolean, selected: PlanSpec[], reason: string }} PlanApprovalResult
@@ -35,7 +36,7 @@
  * @returns {Promise<PlanApprovalResult>}
  */
 export async function planApprovalGate(opts = {}) {
-  const { ui, capabilities, autoApprove = false, log } = opts;
+  const { ui, capabilities, autoApprove = false, estimate, log } = opts;
   const all = Array.isArray(opts.specs) ? opts.specs : [];
   const note = async (msg, options) => {
     if (typeof log === "function") await log(msg, options);
@@ -50,14 +51,16 @@ export async function planApprovalGate(opts = {}) {
     return { approved: true, selected: all, reason: "non-interactive" };
   }
 
-  await note(`plan ready: ${all.length} subtask(s) — review before fan-out:`);
+  await note(
+    `plan ready: ${all.length} subtask(s)${estimate ? ` — ${estimate}` : ""} — review before fan-out:`,
+  );
   for (const s of all) {
     await note(`  • ${s.agent}: ${promptPreview(s.prompt)}`);
   }
 
   let result;
   try {
-    result = await ui.elicitation(buildApprovalElicitation(all));
+    result = await ui.elicitation(buildApprovalElicitation(all, estimate));
   } catch (err) {
     // The host claimed elicitation support but the dialog failed. Fail closed:
     // never fan out N child sessions without explicit consent.
@@ -88,13 +91,13 @@ function promptPreview(prompt) {
   return String(prompt ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
-function buildApprovalElicitation(specs) {
+function buildApprovalElicitation(specs, estimate) {
   // Stable index keys keep duplicate agent names distinct; enumNames carries the
   // human-readable agent label the host shows next to each checkbox.
   const keys = specs.map((_, i) => String(i));
   const labels = specs.map((s) => s.agent);
   return {
-    message: `Plan ready: ${specs.length} subtask(s). Select which to run, then Accept (Decline to abort).`,
+    message: `Plan ready: ${specs.length} subtask(s).${estimate ? ` ${estimate}.` : ""} Select which to run, then Accept (Decline to abort).`,
     requestedSchema: {
       type: "object",
       properties: {
