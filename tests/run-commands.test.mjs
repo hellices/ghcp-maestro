@@ -72,6 +72,21 @@ test("showRuns lists recent runs and inlines a live summary for running ones", a
   assert.match(msgs.at(-1), /open a run's live dashboard/);
 });
 
+test("showRuns shows the token total for runs that recorded one", async () => {
+  const session = fakeSession();
+  await showRuns(session, "", {
+    listRuns: async () => [
+      { runId: "r-tok", workflow: "task", status: "complete", startedAt: 0, tokensUsed: 4321 },
+      { runId: "r-none", workflow: "task", status: "complete", startedAt: 0 },
+    ],
+    defaultBaseDir: () => "/tmp/runs",
+  });
+  const msgs = session.logs.map((l) => l.msg);
+  assert.ok(msgs.some((m) => m.includes("r-tok") && m.includes("tokens=4321")));
+  const noneLine = msgs.find((m) => m.includes("r-none"));
+  assert.ok(noneLine && !noneLine.includes("tokens="), "runs without usage stay unchanged");
+});
+
 // --- resumeRun --------------------------------------------------------------
 
 test("resumeRun warns when no run id is given", async () => {

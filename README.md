@@ -38,10 +38,13 @@ tunable with `GHCP_MAESTRO_RETRIES=<n>` (`0` disables).
 **Cost visibility and a token budget.**
 Before fan-out the gate shows a run-size estimate, and runs of
 `GHCP_MAESTRO_LARGE_RUN_AGENTS` or more subtasks (default 5) get an explicit
-warning. Set `GHCP_MAESTRO_BUDGET_TOKENS=<n>` (`500k` / `2m` shorthand works)
-to cap a run: once the cap is hit, in-flight agents finish, un-started agents
-are skipped, and the run is soft-stopped — resumable later with
-`/maestro-resume`. `/maestros` shows live per-agent and total token usage.
+warning. Token accounting is always on: every completed run logs its total
+token usage and records it in the run manifest, so `/maestros` shows per-run
+cost. Enforcement is opt-in — set `GHCP_MAESTRO_BUDGET_TOKENS=<n>`
+(`500k` / `2m` shorthand works) to cap a run: once the cap is hit, in-flight
+agents finish, un-started agents are skipped, and the run is soft-stopped —
+resumable later with `/maestro-resume`. `/maestros` shows live per-agent and
+total token usage.
 
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final
