@@ -6,6 +6,7 @@ import {
   fanoutFailureSummary,
   allFailed,
   agentDigest,
+  coverageLine,
   exploreFullDumpLine,
   logExploreResults,
   labeledDumpLine,
@@ -171,4 +172,37 @@ test("synthStatusLine renders the task variant (with wall) and cached tag", () =
   assert.match(line, /\(cached\)/);
   assert.match(line, /took=1500ms/);
   assert.match(line, /wall=200ms/);
+});
+
+// --- Partial-failure disclosure (#22) ----------------------------------------
+
+test("agentDigest renders non-ok results as explicit FAILED blocks", () => {
+  const digest = agentDigest(
+    [
+      { spec: { agent: "good" }, status: "ok", output: { text: "fine" } },
+      { spec: { agent: "slow" }, status: "timeout", error: "agent timed out after 5ms" },
+      { spec: { agent: "dep" }, status: "skipped", error: 'dependency "slow" did not complete' },
+    ],
+    { emptyPlaceholder: "(no output)" },
+  );
+  assert.match(digest, /## good\nfine/);
+  assert.match(digest, /## slow \(FAILED: timeout\)\n\(this angle is missing — agent timed out after 5ms\)/);
+  assert.match(digest, /## dep \(FAILED: skipped\)/);
+});
+
+test("agentDigest treats results without a status as ok (back-compat)", () => {
+  const digest = agentDigest([{ spec: { agent: "a" }, output: { text: "o" } }]);
+  assert.equal(digest, "## a\no");
+});
+
+test("coverageLine summarises ok vs failed subtasks", () => {
+  const mk = (agent, status) => ({ spec: { agent }, status });
+  assert.equal(
+    coverageLine("r1", [mk("a", "ok"), mk("b", "ok"), mk("c", "ok")]),
+    "ghcp-maestro/r1: coverage: 3/3 subtasks ok",
+  );
+  assert.equal(
+    coverageLine("r1", [mk("a", "error"), mk("b", "skipped"), mk("c", "ok"), mk("d", "timeout")]),
+    "ghcp-maestro/r1: coverage: 1/4 subtasks ok (1 error, 1 skipped, 1 timeout)",
+  );
 });

@@ -45,3 +45,26 @@ test("buildSynthPrompt matches the canonical task-workflow prompt byte-for-byte"
   ].join("\n");
   assert.equal(prompt, expected);
 });
+
+// --- Partial-failure disclosure (#22) ----------------------------------------
+
+test("buildSynthPrompt discloses failed subagents and instructs about missing angles", () => {
+  const prompt = buildSynthPrompt({
+    task: "T",
+    results: [
+      { spec: { agent: "a" }, status: "ok", output: { text: "o" } },
+      { spec: { agent: "b" }, status: "timeout", error: "agent timed out after 5ms" },
+    ],
+  });
+  assert.match(prompt, /## a\no/);
+  assert.match(prompt, /## b \(FAILED: timeout\)/);
+  assert.match(prompt, /state explicitly which angles are missing/);
+});
+
+test("buildSynthPrompt omits the missing-angles instruction when every subagent succeeded", () => {
+  const prompt = buildSynthPrompt({
+    task: "T",
+    results: [{ spec: { agent: "a" }, status: "ok", output: { text: "o" } }],
+  });
+  assert.doesNotMatch(prompt, /missing/);
+});
