@@ -5,6 +5,29 @@
 // which keeps them unit-testable with fakes.
 
 import { releaseRun } from "./run-registry.mjs";
+import { buildTraceSpans } from "./trace.mjs";
+import { writeJsonAtomic } from "./run-store.mjs";
+import { join } from "node:path";
+
+/**
+ * Best-effort OTel GenAI-style trace export (#32): write `trace.json` into the
+ * run dir from the manifest + cached agent records. Never throws — tracing
+ * must not break a run's terminal transition. No-op for run handles that lack
+ * the run-store surface (fakes, resume probes).
+ *
+ * @param {{ runDir?: string, manifest?: object, listAgents?: () => Promise<object[]> } | undefined} run
+ * @returns {Promise<void>}
+ */
+export async function writeRunTrace(run) {
+  try {
+    if (!run?.runDir || !run?.manifest || typeof run.listAgents !== "function") return;
+    const agents = await run.listAgents();
+    const trace = buildTraceSpans({ manifest: run.manifest, agents });
+    await writeJsonAtomic(join(run.runDir, "trace.json"), trace);
+  } catch {
+    // best-effort — a trace write failure must never mask the run outcome
+  }
+}
 
 /**
  * Mark a run failed, log the reason at error level, and return the run handle so
@@ -27,6 +50,7 @@ export async function failRun(session, run, message) {
   } catch {
     // ignore — fall through to log the original failure
   }
+  await writeRunTrace(run);
   if (run?.runId) releaseRun(run.runId);
   await session.log(message, { level: "error" });
   return run;
@@ -45,6 +69,7 @@ export async function failRun(session, run, message) {
 export async function completeRun(run) {
   try {
     await run.complete();
+    await writeRunTrace(run);
   } finally {
     if (run?.runId) releaseRun(run.runId);
   }
