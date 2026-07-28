@@ -13,6 +13,14 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   `timeout`/`aborted` outcomes never retry, backoff sleeps abort with the run
   signal, and results/persisted agent records carry an `attempts` count. The
   quality helpers forward `retries`/`retryBaseMs`. (#20)
+- **Cost visibility + token budget cap.** New `core/budget.mjs`: the task
+  workflow logs a run-size estimate at the plan gate (also shown in the
+  approval dialog), warns on fan-outs of `GHCP_MAESTRO_LARGE_RUN_AGENTS`+
+  subtasks (default 5), and `GHCP_MAESTRO_BUDGET_TOKENS` (accepts `500k`/`2m`)
+  soft-stops a run once exceeded — in-flight agents finish, un-started agents
+  are skipped as `aborted`, the run is marked `stopped` and stays resumable
+  via `/maestro-resume`. `spawn`/`spawnAll`/`runPhase` accept a shared
+  `budget` tracker. (#14)
 
 ### Fixed
 - **Resume now reruns failed agents.** `spawn` replays only cached `ok` records

@@ -106,3 +106,56 @@ test("task workflow fails cleanly when the plan is unparseable", async () => {
     assert.ok(session.logs.some((l) => /plan retry also unparseable/.test(l)));
   });
 });
+
+test("task workflow logs a run-size estimate before the gate", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(session.logs.some((l) => /est\. run size: medium \(5 agents incl\. plan\+synth\)/.test(l)));
+  });
+});
+
+test("task workflow warns about large fan-outs at the gate", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: testAdapter,
+      env: { GHCP_MAESTRO_LARGE_RUN_AGENTS: "3" },
+    });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(session.logs.some((l) => /large fan-out: 3 subtask/.test(l)));
+  });
+});
+
+test("task workflow soft-stops before synth when the token budget is exceeded", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const invoked = [];
+    // Every agent reports 1000 tokens; a 1500-token budget survives the plan
+    // phase but is exceeded during the 3-agent explore fan-out.
+    const adapter = {
+      name: "tokens",
+      async invoke(spec, ctx) {
+        invoked.push(spec.agent);
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", { budgetTokens: 1500 });
+    assert.equal(run.manifest.status, "stopped");
+    assert.ok(!invoked.includes("synth"), "synth must not run after the budget is blown");
+    assert.ok(session.logs.some((l) => /budget/.test(l) && /stopped/.test(l)));
+    assert.ok(session.logs.some((l) => /maestro-resume/.test(l)));
+  });
+});
