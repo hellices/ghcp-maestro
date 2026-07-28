@@ -59,6 +59,14 @@ GHCP_MAESTRO_MODEL_ROUTES='{"explore:*":"gpt-5-mini","synth":"claude-sonnet-4.5"
 Unmatched labels (and no routes at all — the default) fall back to the child
 session's default model.
 
+**Verification before synthesis (opt-in).**
+Set `GHCP_MAESTRO_VERIFY=1` to insert a verify phase between fan-out and
+synthesis: one extra agent judges each subtask output against the original
+task objective (met / partially-met / not-met, with concrete gaps) and the
+report is fed to the synth agent so unverified claims aren't presented as
+settled facts. Off by default — it costs one extra agent per run. A failed
+verify agent never fails the run; synthesis proceeds without the report.
+
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final
 answer plus suggested next actions. Failed subtasks are disclosed, not hidden:

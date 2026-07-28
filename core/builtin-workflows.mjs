@@ -21,7 +21,7 @@ import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, a
 import { planApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { envModelRoutes, resolveModel } from "./model-routes.mjs";
-import { buildSynthPrompt } from "./synth.mjs";
+import { buildSynthPrompt, buildVerifyPrompt } from "./synth.mjs";
 import {
   exploreResultLine,
   wallClockLine,
@@ -489,13 +489,43 @@ export function createBuiltinWorkflows(deps) {
       return run;
     }
 
+    // Optional verify phase (#31): one agent judges each subtask output against
+    // the original objective before synth (MAST: high-level objective
+    // verification). Opt-in only — an extra agent is extra spend, same
+    // principle as the budget: visibility always-on, cost opt-in. A verify
+    // failure is non-fatal: warn and synthesize without the report.
+    const verifyEnabled = opts.verify === true || isTruthyEnv(env.GHCP_MAESTRO_VERIFY);
+    let verifyReport;
+    if (verifyEnabled) {
+      await session.log(`ghcp-maestro/${runId}: phase=verify agents=1`);
+      const verifySpec = {
+        id: "verify",
+        agent: "verify",
+        timeoutMs: TIMEOUT_AGENT_MS,
+        prompt: buildVerifyPrompt({ task, results: exploreResults }),
+        ...withModel(resolveModel("verify", routes)),
+      };
+      const {
+        results: [verify],
+      } = await runPhase([verifySpec], { run, runId, phase: "verify", adapter, budget });
+      if (verify.status === "ok") {
+        verifyReport = (verify.output?.text ?? "").trim() || undefined;
+        await session.log(labeledDumpLine(runId, "VERIFY REPORT", verify));
+      } else {
+        await session.log(
+          `ghcp-maestro/${runId}: verify agent ${verify.status}: ${verify.error ?? "(no error)"} — continuing to synth without a verification report`,
+          { level: "warning" },
+        );
+      }
+    }
+
     // Phase 3 — synth: merge into a single answer to the original task.
     await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
     const synthSpec = {
       id: "synth",
       agent: "synth",
       timeoutMs: TIMEOUT_AGENT_MS,
-      prompt: buildSynthPrompt({ task, results: exploreResults }),
+      prompt: buildSynthPrompt({ task, results: exploreResults, verifyReport }),
       ...withModel(resolveModel("synth", routes)),
     };
     const {
@@ -520,8 +550,9 @@ export function createBuiltinWorkflows(deps) {
     await completeRun(run);
     const tokensNote =
       budget.used() > 0 ? ` tokens=${budget.used()}${budget.limit ? `/${budget.limit}` : ""}` : "";
+    const verifyRan = verifyReport !== undefined ? 1 : 0;
     await session.log(
-      `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)${tokensNote}`,
+      `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + verifyRan + 1} agents across ${3 + verifyRan} phases (plan + explore[${specs.length}]${verifyRan ? " + verify" : ""} + synth)${tokensNote}`,
     );
     return run;
   }

@@ -251,6 +251,113 @@ test("task workflow leaves spec.model unset when no routes are configured", asyn
   });
 });
 
+// --- Verify phase (#31) --------------------------------------------------------
+
+test("task workflow runs the verify phase when opted in and feeds synth the report", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const adapter = {
+      name: "verify-spy",
+      async invoke(spec) {
+        prompts[spec.agent] = spec.prompt;
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        if (spec.agent === "verify") return { text: "OVERALL: 3/3 subtasks met the objective" };
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", { verify: true });
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(prompts.verify, "verify agent must run");
+    assert.match(prompts.verify, /verification agent/);
+    assert.match(prompts.synth, /OVERALL: 3\/3 subtasks met the objective/);
+    assert.ok(session.logs.some((l) => /phase=verify agents=1/.test(l)));
+    assert.ok(session.logs.some((l) => /VERIFY REPORT/.test(l)));
+    assert.ok(
+      session.logs.some((l) => /complete — 6 agents across 4 phases .*\+ verify \+ synth/.test(l)),
+    );
+  });
+});
+
+test("task workflow skips verify by default and via env opts in", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const agents = [];
+    const adapter = () => ({
+      name: "spy",
+      async invoke(spec) {
+        agents.push(spec.agent);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: "out" };
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: adapter });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(!agents.includes("verify"), "verify must be opt-in");
+
+    agents.length = 0;
+    const { runTaskWorkflow: withEnv } = createBuiltinWorkflows({
+      getAdapter: adapter,
+      env: { GHCP_MAESTRO_VERIFY: "1" },
+    });
+    await withEnv(session, "do the thing");
+    assert.ok(agents.includes("verify"), "GHCP_MAESTRO_VERIFY must enable verify");
+  });
+});
+
+test("task workflow survives a failed verify agent and synthesizes without a report", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let synthPrompt = "";
+    const adapter = {
+      name: "verify-fail",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        if (spec.agent === "verify") throw new Error("verify blew up");
+        if (spec.agent === "synth") {
+          synthPrompt = spec.prompt;
+          return { text: "final" };
+        }
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", { verify: true });
+    assert.equal(run.manifest.status, "complete");
+    assert.doesNotMatch(synthPrompt, /verification agent independently judged/);
+    assert.ok(
+      session.logs.some((l) => /verify agent error: .*continuing to synth/.test(l)),
+      "verify failure must be logged as a warning",
+    );
+    assert.ok(session.logs.some((l) => /complete — 5 agents across 3 phases/.test(l)));
+  });
+});
+
 test("task workflow reports and persists token usage even without a budget", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();
