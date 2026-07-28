@@ -21,6 +21,14 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   are skipped as `aborted`, the run is marked `stopped` and stays resumable
   via `/maestro-resume`. `spawn`/`spawnAll`/`runPhase` accept a shared
   `budget` tracker. (#14)
+- **DAG plans: `dependsOn` between subtasks.** The plan schema gains an
+  optional `dependsOn: string[]` (validated: known agents, no self-reference,
+  no cycles). `planLayers` groups specs into topological layers; the task
+  workflow fans each layer out in order and injects dependency outputs
+  (truncated to 4 000 chars each) into dependents' prompts via
+  `augmentPromptWithDeps`. Dependents of a failed dependency are persisted as
+  a new `skipped` status without invoking the adapter, so `/maestro-resume`
+  reruns them. Plans without `dependsOn` behave exactly as before. (#21)
 
 ### Fixed
 - **Resume now reruns failed agents.** `spawn` replays only cached `ok` records

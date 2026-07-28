@@ -33,16 +33,17 @@ export const MAX_AGENT_ID_LEN = 40;
 export function buildPlanPrompt(task, parserError, previousReply) {
   const lines = [
     "You are a planning agent for a dynamic multi-agent workflow runtime.",
-    "Decompose the following task into 3 to 6 INDEPENDENT subtasks that can run in parallel without seeing each other's output.",
+    "Decompose the following task into 3 to 6 subtasks that run in parallel. Subtasks are INDEPENDENT by default and must not assume they can see each other's output.",
     "Each subtask runs in its own isolated Copilot session — there is no shared state, no chat history, no working directory you can rely on. Subtasks must therefore be self-contained: include any context they need inside the prompt itself.",
     "",
     "Reply with ONLY a JSON array. No prose, no markdown fences, no commentary. Schema:",
-    '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>" }, ... ]',
+    '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>", "dependsOn": ["<agent>"] }, ... ]',
     "",
     "Rules:",
     `- ${MIN_PLAN_ENTRIES} <= length <= ${MAX_PLAN_ENTRIES}`,
     "- Every entry MUST have non-empty string `agent` and `prompt`",
     "- `agent` values MUST be unique within the array",
+    "- `dependsOn` is OPTIONAL: list the `agent` ids whose output this subtask genuinely needs — its prompt will then receive those outputs. Prefer no dependencies (most subtasks should have none), never chain deeper than one dependent of a dependent, and never create cycles.",
     "- Each `prompt` should produce a focused, finite answer in 1-2 short paragraphs or a small list. No open-ended exploration.",
     "- Cover the task from genuinely different angles; do not duplicate.",
     "",
@@ -138,9 +139,97 @@ export function parseAndValidatePlan(text) {
         `entry ${i} (${agent}) prompt is ${prompt.length} chars — must be <= ${MAX_PROMPT_LEN} to keep child-session prompts focused`,
       );
     }
+
+    // Optional dependsOn (#21): validated per entry here; cross-entry checks
+    // (unknown names, cycles) happen after the loop once all names are known.
+    if (entry.dependsOn !== undefined) {
+      if (!Array.isArray(entry.dependsOn)) {
+        throw new Error(`entry ${i} (${agent}) "dependsOn" must be an array of agent names`);
+      }
+      const deps = [];
+      for (const d of entry.dependsOn) {
+        if (typeof d !== "string" || d.trim() === "") {
+          throw new Error(`entry ${i} (${agent}) "dependsOn" entries must be non-empty strings`);
+        }
+        const dep = d.trim();
+        if (dep === agent) throw new Error(`entry ${i} (${agent}) cannot depend on itself`);
+        if (!deps.includes(dep)) deps.push(dep);
+      }
+      normalized.push(deps.length > 0 ? { agent, prompt, dependsOn: deps } : { agent, prompt });
+      continue;
+    }
     normalized.push({ agent, prompt });
   }
+
+  const names = new Set(normalized.map((e) => e.agent));
+  for (const e of normalized) {
+    for (const d of e.dependsOn ?? []) {
+      if (!names.has(d)) throw new Error(`"${e.agent}" depends on unknown agent "${d}"`);
+    }
+  }
+  planLayers(normalized); // throws on dependency cycles
   return normalized;
+}
+
+/**
+ * Group plan specs into topological layers: specs with no dependencies land in
+ * layer 0, every dependent lands one layer after its deepest dependency.
+ * Original array order is preserved within each layer. Throws on unknown
+ * dependencies or cycles. Pure.
+ *
+ * @param {{ agent: string, dependsOn?: string[] }[]} specs
+ * @returns {Array<Array<{ agent: string, dependsOn?: string[] }>>}
+ */
+export function planLayers(specs) {
+  const byName = new Map(specs.map((s) => [s.agent, s]));
+  const layerOf = new Map();
+  const visiting = new Set();
+
+  function layerFor(name) {
+    if (layerOf.has(name)) return layerOf.get(name);
+    const spec = byName.get(name);
+    if (!spec) throw new Error(`planLayers: unknown dependency "${name}"`);
+    if (visiting.has(name)) throw new Error(`dependency cycle involving "${name}"`);
+    visiting.add(name);
+    const deps = spec.dependsOn ?? [];
+    const layer = deps.length === 0 ? 0 : 1 + Math.max(...deps.map(layerFor));
+    visiting.delete(name);
+    layerOf.set(name, layer);
+    return layer;
+  }
+
+  for (const s of specs) layerFor(s.agent);
+  const layers = [];
+  for (const s of specs) {
+    const l = layerOf.get(s.agent);
+    (layers[l] ??= []).push(s);
+  }
+  return layers;
+}
+
+/** Per-dependency cap on the output text injected into a dependent's prompt. */
+export const MAX_DEP_OUTPUT_CHARS = 4_000;
+
+/**
+ * Append dependency outputs to a dependent subtask's prompt. Each output is
+ * truncated to MAX_DEP_OUTPUT_CHARS so a verbose dependency can't blow up the
+ * child-session prompt. Returns the prompt unchanged when there are no deps.
+ *
+ * @param {string} prompt
+ * @param {{ agent: string, text?: string }[]} deps
+ * @returns {string}
+ */
+export function augmentPromptWithDeps(prompt, deps) {
+  if (!deps?.length) return prompt;
+  const sections = deps.map(
+    (d) => `### output of ${d.agent}\n${(d.text ?? "").slice(0, MAX_DEP_OUTPUT_CHARS)}`,
+  );
+  return [
+    prompt,
+    "",
+    "## Dependency outputs (from subtasks this one depends on)",
+    ...sections,
+  ].join("\n");
 }
 
 /**
