@@ -196,7 +196,11 @@ test("installWorkflowCommand asks for confirmation when elicitation is available
       fetchImpl: fetchOk(GOOD_CODE),
     });
     assert.equal(calls.length, 1);
-    assert.match(calls[0].message, /raw\.githubusercontent\.com\/acme\/flows\/main\/wf\/my-flow\.mjs/);
+    assert.ok(
+      calls[0].message.includes(
+        "https://raw.githubusercontent.com/acme/flows/main/wf/my-flow.mjs",
+      ),
+    );
     await assert.rejects(readFile(join(dir, "my-flow.mjs")));
     assert.ok(session.logs.some((l) => /cancel|declin/i.test(l)));
   });
