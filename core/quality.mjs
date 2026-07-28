@@ -396,6 +396,8 @@ function forwardOpts(opts) {
     concurrency: opts.concurrency,
     signal: opts.signal,
     runHandle: opts.runHandle,
+    retries: opts.retries,
+    retryBaseMs: opts.retryBaseMs,
   };
 }
 
