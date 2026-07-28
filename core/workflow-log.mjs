@@ -5,12 +5,14 @@
 /**
  * @typedef {{
  *   spec: { agent?: string },
- *   status: string,
+ *   status?: string,
+ *   error?: string,
  *   cached?: boolean,
  *   startedAt: number,
  *   finishedAt: number,
  *   output?: { text?: string },
- * }} AgentResultLike
+ * }} AgentResultLike - `status` may be absent on digest-only inputs (treated
+ *   as ok); `error` carries the failure text rendered in FAILED blocks.
  */
 
 function text(result) {
