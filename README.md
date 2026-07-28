@@ -46,6 +46,19 @@ agents finish, un-started agents are skipped, and the run is soft-stopped —
 resumable later with `/maestro-resume`. `/maestros` shows live per-agent and
 total token usage.
 
+**Model routing (opt-in).**
+Worker agents doing mechanical subtasks rarely need the same model as the
+planner or the synth phase. Set `GHCP_MAESTRO_MODEL_ROUTES` to a JSON map from
+label pattern to model — labels are `plan`, `explore:<agent>`, `synth`; `*`
+wildcards, first match wins:
+
+```
+GHCP_MAESTRO_MODEL_ROUTES='{"explore:*":"gpt-5-mini","synth":"claude-sonnet-4.5"}'
+```
+
+Unmatched labels (and no routes at all — the default) fall back to the child
+session's default model.
+
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final
 answer plus suggested next actions. Failed subtasks are disclosed, not hidden:

@@ -160,6 +160,97 @@ test("task workflow soft-stops before synth when the token budget is exceeded", 
   });
 });
 
+// --- Model routing (#17) ------------------------------------------------------
+
+test("task workflow routes per-label models to agent specs when routes are set", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const models = [];
+    const adapter = {
+      name: "route-spy",
+      async invoke(spec) {
+        models.push(`${spec.agent}=${spec.model ?? "(default)"}`);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", {
+      modelRoutes: { "explore:*": "fast-model", synth: "premium-model" },
+    });
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(models.includes("plan=(default)"), "unrouted label keeps the adapter default");
+    assert.ok(models.includes("a=fast-model"));
+    assert.ok(models.includes("b=fast-model"));
+    assert.ok(models.includes("c=fast-model"));
+    assert.ok(models.includes("synth=premium-model"));
+    assert.ok(session.logs.some((l) => /model routes: .*fast-model/.test(l)));
+  });
+});
+
+test("task workflow reads model routes from GHCP_MAESTRO_MODEL_ROUTES", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const models = [];
+    const adapter = {
+      name: "route-spy",
+      async invoke(spec) {
+        models.push(spec.model);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => adapter,
+      env: { GHCP_MAESTRO_MODEL_ROUTES: '{"*":"everywhere-model"}' },
+    });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(models.every((m) => m === "everywhere-model"));
+  });
+});
+
+test("task workflow leaves spec.model unset when no routes are configured", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const sawModelKey = [];
+    const adapter = {
+      name: "route-spy",
+      async invoke(spec) {
+        sawModelKey.push("model" in spec);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(sawModelKey.every((k) => k === false), "specs must not grow a model key by default");
+  });
+});
+
 test("task workflow reports and persists token usage even without a budget", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();

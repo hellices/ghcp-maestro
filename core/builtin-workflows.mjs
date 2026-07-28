@@ -20,6 +20,7 @@ import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, augmentPromptWithDeps } from "./plan.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
+import { envModelRoutes, resolveModel } from "./model-routes.mjs";
 import { buildSynthPrompt } from "./synth.mjs";
 import {
   exploreResultLine,
@@ -31,6 +32,17 @@ import {
   labeledDumpLine,
   synthStatusLine,
 } from "./workflow-log.mjs";
+
+/**
+ * Spread-helper: `{ model }` when the routing map resolved one, `{}` otherwise —
+ * keeps unrouted specs byte-identical to the pre-#17 shape (agent-record cache
+ * compatibility across resumes).
+ *
+ * @param {string | undefined} model
+ */
+function withModel(model) {
+  return model !== undefined ? { model } : {};
+}
 
 /**
  * Compose the three built-in workflow handlers over an adapter provider.
@@ -241,11 +253,17 @@ export function createBuiltinWorkflows(deps) {
     // Per-run token budget (#14): accumulates per-turn usage across ALL phases;
     // when exceeded, un-started agents are skipped and the run soft-stops.
     const budget = createBudgetTracker(opts.budgetTokens ?? envBudgetTokens(env));
+    // Model routing (#17): opt-in per-label model map ("plan" / "explore:<agent>"
+    // / "synth"). Null routes = every agent uses the adapter's default model.
+    const routes = opts.modelRoutes ?? envModelRoutes(env);
     await session.log(
       `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
     );
     if (budget.limit) {
       await session.log(`ghcp-maestro/${runId}: token budget: ${budget.limit} tokens`);
+    }
+    if (routes) {
+      await session.log(`ghcp-maestro/${runId}: model routes: ${JSON.stringify(routes)}`);
     }
     await logBackgroundHint(session, runId, opts);
 
@@ -256,6 +274,7 @@ export function createBuiltinWorkflows(deps) {
       agent: "plan",
       timeoutMs: TIMEOUT_AGENT_MS,
       prompt: buildPlanPrompt(task),
+      ...withModel(resolveModel("plan", routes)),
     };
     const {
       results: [planResult],
@@ -287,6 +306,7 @@ export function createBuiltinWorkflows(deps) {
         agent: "plan",
         timeoutMs: TIMEOUT_AGENT_MS,
         prompt: buildPlanPrompt(task, err.message, planText),
+        ...withModel(resolveModel("plan", routes)),
       };
       const {
         results: [retryResult],
@@ -372,6 +392,7 @@ export function createBuiltinWorkflows(deps) {
       prompt: s.prompt,
       ...(s.dependsOn ? { dependsOn: s.dependsOn } : {}),
       timeoutMs: TIMEOUT_AGENT_MS,
+      ...withModel(resolveModel(`explore:${s.agent}`, routes)),
     }));
     // The gate may have deselected a dependency. Layer on deps filtered to the
     // selected set so planLayers can't throw "unknown dependency"; the skip
@@ -475,6 +496,7 @@ export function createBuiltinWorkflows(deps) {
       agent: "synth",
       timeoutMs: TIMEOUT_AGENT_MS,
       prompt: buildSynthPrompt({ task, results: exploreResults }),
+      ...withModel(resolveModel("synth", routes)),
     };
     const {
       results: [synth],
