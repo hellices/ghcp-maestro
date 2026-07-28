@@ -160,6 +160,36 @@ test("task workflow soft-stops before synth when the token budget is exceeded", 
   });
 });
 
+test("task workflow reports and persists token usage even without a budget", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    // Every agent reports 1000 tokens but no budget is set: nothing is skipped,
+    // the run completes, and the aggregate is still reported and persisted.
+    const adapter = {
+      name: "tokens",
+      async invoke(spec, ctx) {
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    // 5 agents (plan + 3 explore + synth) × 1000 tokens each.
+    assert.equal(run.manifest.tokensUsed, 5000);
+    assert.ok(session.logs.some((l) => /task workflow complete —.*tokens=5000(?!\/)/.test(l)));
+  });
+});
+
 // --- DAG plans (#21) ---------------------------------------------------------
 
 test("task workflow runs dependsOn subtasks in layers with augmented prompts", async () => {

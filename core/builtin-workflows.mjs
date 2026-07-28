@@ -460,7 +460,7 @@ export function createBuiltinWorkflows(deps) {
     // subtasks and reruns only the skipped/failed ones under a fresh budget.
     if (budget.exceeded()) {
       releaseRun(runId);
-      await run.patchManifest({ status: "stopped" });
+      await run.patchManifest({ status: "stopped", tokensUsed: budget.used() });
       await session.log(
         `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before synth; finish it later with /maestro-resume ${runId}`,
         { level: "warning" },
@@ -492,9 +492,14 @@ export function createBuiltinWorkflows(deps) {
       );
     }
 
+    // Token accounting is always-on (independent of any cap): persist the
+    // aggregate so /maestros can show per-run cost even without a budget set.
+    if (budget.used() > 0) await run.patchManifest({ tokensUsed: budget.used() });
     await completeRun(run);
+    const tokensNote =
+      budget.used() > 0 ? ` tokens=${budget.used()}${budget.limit ? `/${budget.limit}` : ""}` : "";
     await session.log(
-      `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
+      `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)${tokensNote}`,
     );
     return run;
   }
