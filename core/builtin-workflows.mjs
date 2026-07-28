@@ -26,6 +26,7 @@ import {
   wallClockLine,
   allFailed,
   agentDigest,
+  coverageLine,
   logExploreResults,
   labeledDumpLine,
   synthStatusLine,
@@ -480,6 +481,7 @@ export function createBuiltinWorkflows(deps) {
       elapsedMs: phase2Elapsed,
     } = await runPhase([synthSpec], { run, runId, phase: "synth", adapter, budget });
     await session.log(synthStatusLine(runId, synth, { wallMs: phase2Elapsed }));
+    await session.log(coverageLine(runId, exploreResults));
     await session.log(labeledDumpLine(runId, "FINAL ANSWER", synth));
 
     if (synth.status !== "ok") {

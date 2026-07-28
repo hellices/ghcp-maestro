@@ -45,7 +45,10 @@ are skipped, and the run is soft-stopped — resumable later with
 
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final
-answer plus suggested next actions.
+answer plus suggested next actions. Failed subtasks are disclosed, not hidden:
+the synth prompt marks them `(FAILED: <status>)` and instructs the agent to
+state which angles are missing, and the final output includes a coverage line
+(`coverage: 4/5 subtasks ok (1 timeout)`).
 
 **Pre-approval before fan-out.**
 On an interactive host, ghcp-maestro pauses after planning to show the subtask
