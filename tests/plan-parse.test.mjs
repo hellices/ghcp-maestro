@@ -4,6 +4,8 @@ import {
   parseAndValidatePlan as parse,
   buildPlanPrompt,
   sanitizeAgentName,
+  planLayers,
+  augmentPromptWithDeps,
   MAX_AGENT_ID_LEN,
 } from "../core/plan.mjs";
 
@@ -140,4 +142,97 @@ test("sanitizeAgentName falls back to 'agent' for empty input", () => {
   // A run of disallowed chars collapses to a single hyphen (the id is always
   // index-prefixed downstream, so this stays unique and filesystem-safe).
   assert.equal(sanitizeAgentName("***"), "-");
+});
+
+// --- DAG plans (#21): optional dependsOn + topological layering -------------
+
+test("parseAndValidatePlan accepts optional dependsOn referencing known agents", () => {
+  const plan = JSON.stringify([
+    { agent: "a", prompt: "do a" },
+    { agent: "b", prompt: "do b", dependsOn: ["a"] },
+    { agent: "c", prompt: "do c" },
+  ]);
+  const out = parse(plan);
+  assert.deepEqual(out[1].dependsOn, ["a"]);
+  assert.equal("dependsOn" in out[0], false);
+  assert.equal("dependsOn" in out[2], false);
+});
+
+test("parseAndValidatePlan dedupes repeated dependsOn entries", () => {
+  const plan = JSON.stringify([
+    { agent: "a", prompt: "p" },
+    { agent: "b", prompt: "p", dependsOn: ["a", "a"] },
+    { agent: "c", prompt: "p" },
+  ]);
+  assert.deepEqual(parse(plan)[1].dependsOn, ["a"]);
+});
+
+test("parseAndValidatePlan rejects malformed dependsOn", () => {
+  const mk = (deps) =>
+    JSON.stringify([
+      { agent: "a", prompt: "p" },
+      { agent: "b", prompt: "p", dependsOn: deps },
+      { agent: "c", prompt: "p" },
+    ]);
+  assert.throws(() => parse(mk("a")), /dependsOn.*array/i);
+  assert.throws(() => parse(mk([1])), /dependsOn.*string/i);
+  assert.throws(() => parse(mk([""])), /dependsOn.*string/i);
+  assert.throws(() => parse(mk(["b"])), /itself/);
+  assert.throws(() => parse(mk(["nope"])), /unknown agent/);
+});
+
+test("parseAndValidatePlan rejects dependency cycles", () => {
+  const cyc = JSON.stringify([
+    { agent: "a", prompt: "p", dependsOn: ["b"] },
+    { agent: "b", prompt: "p", dependsOn: ["a"] },
+    { agent: "c", prompt: "p" },
+  ]);
+  assert.throws(() => parse(cyc), /cycle/);
+});
+
+test("planLayers puts independent specs in a single layer, in order", () => {
+  const layers = planLayers([{ agent: "a" }, { agent: "b" }, { agent: "c" }]);
+  assert.equal(layers.length, 1);
+  assert.deepEqual(
+    layers[0].map((s) => s.agent),
+    ["a", "b", "c"],
+  );
+});
+
+test("planLayers orders dependents after their dependencies", () => {
+  const layers = planLayers([
+    { agent: "a" },
+    { agent: "b", dependsOn: ["a"] },
+    { agent: "c" },
+    { agent: "d", dependsOn: ["b", "c"] },
+  ]);
+  assert.deepEqual(
+    layers.map((l) => l.map((s) => s.agent)),
+    [["a", "c"], ["b"], ["d"]],
+  );
+});
+
+test("planLayers throws on cycles and unknown dependencies", () => {
+  assert.throws(
+    () => planLayers([{ agent: "a", dependsOn: ["b"] }, { agent: "b", dependsOn: ["a"] }]),
+    /cycle/,
+  );
+  assert.throws(() => planLayers([{ agent: "a", dependsOn: ["ghost"] }]), /unknown/);
+});
+
+test("buildPlanPrompt mentions the optional dependsOn field", () => {
+  const prompt = buildPlanPrompt("T");
+  assert.match(prompt, /dependsOn/);
+});
+
+test("augmentPromptWithDeps appends truncated dependency outputs", () => {
+  const out = augmentPromptWithDeps("base prompt", [
+    { agent: "a", text: "alpha output" },
+    { agent: "b", text: "x".repeat(5000) },
+  ]);
+  assert.match(out, /^base prompt/);
+  assert.match(out, /Dependency outputs/);
+  assert.match(out, /### output of a\nalpha output/);
+  assert.ok(!out.includes("x".repeat(4001)), "dependency output must be truncated");
+  assert.equal(augmentPromptWithDeps("p", []), "p");
 });
