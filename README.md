@@ -28,7 +28,9 @@ a time, hard cap 1000). The host conversation stays clean, every subtask gets a
 fresh context window, and the wall-clock time collapses to roughly the slowest
 single subtask instead of their sum. Each agent has a generous timeout
 (research agents default to 10 minutes); for very long research runs, raise it
-with `GHCP_MAESTRO_TIMEOUT_MS=<ms>`.
+with `GHCP_MAESTRO_TIMEOUT_MS=<ms>`. Transient agent failures (API blips,
+rate limits) retry automatically with exponential backoff — once by default,
+tunable with `GHCP_MAESTRO_RETRIES=<n>` (`0` disables).
 
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final

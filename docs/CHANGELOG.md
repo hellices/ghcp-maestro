@@ -6,6 +6,14 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+### Added
+- **Agent auto-retry with exponential backoff.** `spawn`/`spawnAll` retry
+  `error`-status attempts (API blips, rate limits) with exponential backoff +
+  jitter — `GHCP_MAESTRO_RETRIES` extra attempts (default 1, `0` disables).
+  `timeout`/`aborted` outcomes never retry, backoff sleeps abort with the run
+  signal, and results/persisted agent records carry an `attempts` count. The
+  quality helpers forward `retries`/`retryBaseMs`. (#20)
+
 ### Fixed
 - **Resume now reruns failed agents.** `spawn` replays only cached `ok` records
   from the run store; cached `error`/`timeout`/`aborted` records re-invoke the

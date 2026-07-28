@@ -223,13 +223,14 @@ test("spawn re-runs cached failed/timeout records on resume (only ok replays)", 
       },
     };
     const spec = { id: "one", prompt: "a" };
-    const first = await spawnAll([spec], { adapter: flaky, runHandle: run });
+    // retries: 0 isolates the resume/cache contract from spawn's auto-retry.
+    const first = await spawnAll([spec], { adapter: flaky, runHandle: run, retries: 0 });
     assert.equal(first[0].status, "error");
     assert.equal(calls, 1);
 
     // Resume: the cached error record must NOT be replayed — the agent reruns.
     failing = false;
-    const second = await spawnAll([spec], { adapter: flaky, runHandle: run });
+    const second = await spawnAll([spec], { adapter: flaky, runHandle: run, retries: 0 });
     assert.equal(calls, 2, "failed record must re-invoke the adapter");
     assert.equal(second[0].status, "ok");
     assert.notEqual(second[0].cached, true);
