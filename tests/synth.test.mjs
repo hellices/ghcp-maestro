@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSynthPrompt } from "../core/synth.mjs";
+import { buildSynthPrompt, buildVerifyPrompt } from "../core/synth.mjs";
 
 test("buildSynthPrompt embeds the task and a per-agent digest", () => {
   const prompt = buildSynthPrompt({
@@ -82,4 +82,35 @@ test("buildSynthPrompt omits the missing-angles instruction when every subagent 
     results: [{ spec: { agent: "a" }, status: "ok", output: { text: "o" } }],
   });
   assert.doesNotMatch(prompt, /missing/);
+});
+
+// --- Verify phase (#31) --------------------------------------------------------
+
+test("buildVerifyPrompt embeds the task and digest with untrusted fencing", () => {
+  const prompt = buildVerifyPrompt({
+    task: "Ship it",
+    results: [{ spec: { agent: "a" }, status: "ok", output: { text: "did A" } }],
+  });
+  assert.match(prompt, /verification agent/);
+  assert.match(prompt, /Original task: Ship it/);
+  assert.match(prompt, /met \/ partially-met \/ not-met/);
+  assert.match(prompt, /## a\ndid A/);
+  assert.ok(prompt.indexOf("<<<UNTRUSTED-AGENT-OUTPUT>>>") < prompt.indexOf("## a"));
+  assert.match(prompt, /verification only/);
+});
+
+test("buildSynthPrompt appends the verify report only when provided", () => {
+  const base = buildSynthPrompt({
+    task: "T",
+    results: [{ spec: { agent: "a" }, output: { text: "o" } }],
+  });
+  assert.doesNotMatch(base, /verification agent independently judged/);
+  const withReport = buildSynthPrompt({
+    task: "T",
+    results: [{ spec: { agent: "a" }, output: { text: "o" } }],
+    verifyReport: "OVERALL: 1/1 subtasks met the objective",
+  });
+  assert.match(withReport, /verification agent independently judged/);
+  assert.match(withReport, /OVERALL: 1\/1 subtasks met the objective/);
+  assert.ok(withReport.startsWith(base), "default prompt must stay byte-identical as a prefix");
 });
