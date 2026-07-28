@@ -115,6 +115,11 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 /maestro run deep-review {"topic": "이 브랜치의 diff"}
 ```
 
+**워크플로우 공유** — 다른 사람의 워크플로우를 GitHub 에서 바로 설치:
+```text
+/maestro install acme/flows/workflows/security-audit.mjs@v1
+```
+
 > ghcp-maestro 는 **orchestrator-workers** 패턴을 GitHub Copilot CLI 로 구현한
 > 것이다 — 분해 → 병렬 에이전트 fan-out → 교차 검증 → 하나의 종합 답변, 그리고
 > run 을 영속화해 재실행 가능.
@@ -129,6 +134,7 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 | `/maestro brainstorm <주제>` | 다관점 브레인스토밍 → 종합 |
 | `/maestro run <이름> [인자]` | 저장된 워크플로우 실행 (`인자`: JSON 객체 또는 평문) |
 | `/maestro workflows` | 사용 가능한 저장 워크플로우 목록 |
+| `/maestro install <소스> [--force]` | GitHub 에서 저장 워크플로우를 사용자 디렉터리로 설치 |
 | `/maestros [runId]` | 최근 run 목록, 또는 한 run 의 실시간 대시보드 |
 | `/maestro-resume <runId>` | run 재실행; 캐시된 에이전트는 건너뜀 |
 | `/maestro-stop <runId>` | run 중지 + 진행 중 에이전트 abort |
