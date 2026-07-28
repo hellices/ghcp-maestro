@@ -41,7 +41,10 @@ export function parseWorkflowSource(source) {
   if (!s) throw new Error("install source is required (GitHub URL or owner/repo/path.mjs)");
 
   let url;
-  if (/^https?:\/\//i.test(s)) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+    if (!/^https:\/\//i.test(s)) {
+      throw new Error("only https:// sources are supported");
+    }
     const u = new URL(s);
     if (u.hostname === "github.com") {
       // /<owner>/<repo>/blob/<ref>/<path...>
@@ -146,12 +149,23 @@ export async function installWorkflowCommand(session, arg, opts = {}) {
   }
 
   // Confirm before downloading third-party code when the host supports it.
+  // Fail closed: an elicitation error is treated as a declined install.
   if (session.capabilities?.ui?.elicitation && session.ui?.elicitation) {
-    const res = await session.ui.elicitation({
-      message: `Install workflow '${name}' from ${url}? This downloads third-party code that will run with your Copilot session's permissions.`,
-      requestedSchema: { type: "object", properties: {} },
-    });
-    if (res?.action !== "accept") {
+    let accepted = false;
+    try {
+      const res = await session.ui.elicitation({
+        message: `Install workflow '${name}' from ${url}? This downloads third-party code that will run with your Copilot session's permissions.`,
+        requestedSchema: { type: "object", properties: {} },
+      });
+      accepted = res?.action === "accept";
+    } catch (err) {
+      await session.log(
+        `ghcp-maestro: install cancelled (confirmation dialog failed: ${err?.message ?? err}).`,
+        { level: "warning" },
+      );
+      return;
+    }
+    if (!accepted) {
       await session.log("ghcp-maestro: install cancelled (declined at confirmation).");
       return;
     }
@@ -159,11 +173,28 @@ export async function installWorkflowCommand(session, arg, opts = {}) {
 
   let code;
   try {
-    const res = await fetchImpl(url);
+    // redirect:"manual" — a raw URL must not be allowed to bounce to a
+    // non-GitHub host, so any 3xx is refused outright.
+    const res = await fetchImpl(url, { redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      await session.log(
+        `ghcp-maestro: install: refused redirect (HTTP ${res.status}) for ${url} — sources must resolve directly.`,
+        { level: "warning" },
+      );
+      return;
+    }
     if (!res.ok) {
       await session.log(`ghcp-maestro: install: download failed (HTTP ${res.status}) for ${url}`, {
         level: "warning",
       });
+      return;
+    }
+    const contentLength = Number(res.headers?.get?.("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_WORKFLOW_BYTES) {
+      await session.log(
+        `ghcp-maestro: install: file too large (${contentLength} bytes > ${MAX_WORKFLOW_BYTES} max).`,
+        { level: "warning" },
+      );
       return;
     }
     code = await res.text();

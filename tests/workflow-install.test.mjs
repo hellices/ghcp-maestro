@@ -45,6 +45,12 @@ test("parseWorkflowSource rejects non-mjs files, foreign hosts, and garbage", ()
   assert.throws(() => parseWorkflowSource(""), /required|empty/i);
 });
 
+test("parseWorkflowSource rejects plain-http and other non-https schemes", () => {
+  assert.throws(() => parseWorkflowSource("http://github.com/a/b/blob/main/x.mjs"), /https/i);
+  assert.throws(() => parseWorkflowSource("http://raw.githubusercontent.com/a/b/main/x.mjs"), /https/i);
+  assert.throws(() => parseWorkflowSource("ftp://github.com/a/b/blob/main/x.mjs"), /https/i);
+});
+
 // --- installWorkflowCommand ---------------------------------------------------
 
 const GOOD_CODE = [
@@ -179,6 +185,65 @@ test("installWorkflowCommand surfaces fetch failures", async () => {
       fetchImpl: async () => ({ ok: false, status: 404, text: async () => "" }),
     });
     assert.ok(session.logs.some((l) => /404/.test(l)));
+  });
+});
+
+test("installWorkflowCommand fetches with redirect:manual and refuses redirects", async () => {
+  await withDestDir(async (dir) => {
+    const session = fakeSession();
+    let fetchOpts;
+    await installWorkflowCommand(session, "acme/flows/wf/my-flow.mjs", {
+      destDir: dir,
+      fetchImpl: async (_url, opts) => {
+        fetchOpts = opts;
+        return { ok: false, status: 302, text: async () => "" };
+      },
+    });
+    assert.equal(fetchOpts?.redirect, "manual");
+    assert.ok(session.logs.some((l) => /redirect/i.test(l)));
+    await assert.rejects(readFile(join(dir, "my-flow.mjs")));
+  });
+});
+
+test("installWorkflowCommand rejects oversized Content-Length before reading the body", async () => {
+  await withDestDir(async (dir) => {
+    const session = fakeSession();
+    let bodyRead = false;
+    await installWorkflowCommand(session, "acme/flows/wf/my-flow.mjs", {
+      destDir: dir,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h.toLowerCase() === "content-length" ? String(MAX_WORKFLOW_BYTES + 1) : null) },
+        text: async () => {
+          bodyRead = true;
+          return "";
+        },
+      }),
+    });
+    assert.equal(bodyRead, false);
+    assert.ok(session.logs.some((l) => /too large|size/i.test(l)));
+  });
+});
+
+test("installWorkflowCommand fails closed when elicitation throws", async () => {
+  await withDestDir(async (dir) => {
+    let fetched = false;
+    const session = fakeSession({
+      elicitation: async () => {
+        throw new Error("dialog exploded");
+      },
+    });
+    await installWorkflowCommand(session, "acme/flows/wf/my-flow.mjs", {
+      destDir: dir,
+      fetchImpl: async () => {
+        fetched = true;
+        return { ok: true, status: 200, text: async () => GOOD_CODE };
+      },
+    });
+    assert.equal(fetched, false);
+    await assert.rejects(readFile(join(dir, "my-flow.mjs")));
+    assert.ok(session.logs.some((l) => /cancel/i.test(l)));
   });
 });
 
