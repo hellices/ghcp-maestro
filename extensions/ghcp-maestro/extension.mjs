@@ -24,6 +24,7 @@ import {
   parseWorkflowArgs,
   splitWorkflowInvocation,
 } from "../../core/saved-workflows.mjs";
+import { installWorkflowCommand } from "../../core/workflow-install.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { renderMaestroHelp } from "../../core/help.mjs";
@@ -155,6 +156,12 @@ const MAESTRO_SUBCOMMANDS = [
     needsArg: false,
     summary: "List discovered saved workflows (priority: project > user > bundled).",
     run: () => listSavedWorkflows(session),
+  },
+  {
+    name: "install",
+    needsArg: "github source [--force]",
+    summary: "Install a saved workflow from GitHub into the user workflow dir. e.g. /maestro install owner/repo/path/flow.mjs[@ref] or a github.com blob URL.",
+    run: (arg) => installWorkflowCommand(session, arg),
   },
   {
     name: "help",

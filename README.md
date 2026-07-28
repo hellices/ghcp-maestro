@@ -123,6 +123,11 @@ it as its own command (e.g. a deep code review you run on every branch):
 /maestro run deep-review {"topic": "the diff on this branch"}
 ```
 
+**Share workflows** — install someone else's workflow straight from GitHub:
+```text
+/maestro install acme/flows/workflows/security-audit.mjs@v1
+```
+
 > ghcp-maestro is a GitHub Copilot CLI take on the **orchestrator-workers**
 > pattern: plan → fan out parallel agents → cross-check → one synthesized answer,
 > with runs persisted so they can be resumed.
@@ -137,6 +142,7 @@ it as its own command (e.g. a deep code review you run on every branch):
 | `/maestro brainstorm <topic>` | Multi-perspective brainstorm → synthesize |
 | `/maestro run <name> [args]` | Run a saved workflow (`args`: JSON object or plain text) |
 | `/maestro workflows` | List the saved workflows available to you |
+| `/maestro install <source> [--force]` | Install a saved workflow from GitHub into your user dir |
 | `/maestros [runId]` | List recent runs, or show one run's live dashboard |
 | `/maestro-resume <runId>` | Resume a run; cached agents are skipped |
 | `/maestro-stop <runId>` | Stop a run and abort its in-flight agents |
