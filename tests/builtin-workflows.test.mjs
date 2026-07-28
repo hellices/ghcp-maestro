@@ -231,3 +231,45 @@ test("task workflow skips dependents of failed subtasks without invoking them", 
     assert.equal(rec.status, "skipped");
   });
 });
+
+test("gate deselecting a dependency skips its dependents instead of crashing", async () => {
+  await withTempDataDir(async () => {
+    // Interactive session whose approval dialog deselects subtask 0 ("a") and
+    // keeps "b" (dependsOn a) and "c" — the DAG must degrade to skipping b.
+    const logs = [];
+    const session = {
+      logs,
+      capabilities: { ui: { elicitation: true } },
+      ui: {
+        elicitation: async () => ({ action: "accept", content: { subtasks: ["1", "2"] } }),
+      },
+      log: async (msg) => {
+        logs.push(String(msg));
+      },
+    };
+    const invoked = [];
+    const adapter = {
+      name: "dag-gate",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb", dependsOn: ["a"] },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        invoked.push(spec.agent);
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(!invoked.includes("a"), "a was deselected at the gate");
+    assert.ok(!invoked.includes("b"), "b depends on the deselected a");
+    assert.ok(invoked.includes("c"));
+    assert.ok(logs.some((l) => /explore\/b skipped — dependency "a"/.test(l)));
+  });
+});

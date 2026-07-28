@@ -372,7 +372,17 @@ export function createBuiltinWorkflows(deps) {
       ...(s.dependsOn ? { dependsOn: s.dependsOn } : {}),
       timeoutMs: TIMEOUT_AGENT_MS,
     }));
-    const layers = planLayers(exploreSpecs);
+    // The gate may have deselected a dependency. Layer on deps filtered to the
+    // selected set so planLayers can't throw "unknown dependency"; the skip
+    // check below still consults the ORIGINAL dependsOn, so a dependent of a
+    // deselected subtask is skipped (its dep never lands in resultByAgent).
+    const selectedNames = new Set(exploreSpecs.map((s) => s.agent));
+    const layers = planLayers(
+      exploreSpecs.map((s) =>
+        s.dependsOn ? { ...s, dependsOn: s.dependsOn.filter((d) => selectedNames.has(d)) } : s,
+      ),
+    );
+    const specByAgent = new Map(exploreSpecs.map((s) => [s.agent, s]));
     await session.log(
       `ghcp-maestro/${runId}: phase=explore agents=${specs.length}${layers.length > 1 ? ` layers=${layers.length} (topological)` : " (parallel)"}`,
     );
@@ -380,7 +390,8 @@ export function createBuiltinWorkflows(deps) {
     let phase1Elapsed = 0;
     for (const layer of layers) {
       const runnable = [];
-      for (const spec of layer) {
+      for (const layerSpec of layer) {
+        const spec = specByAgent.get(layerSpec.agent);
         const failedDep = (spec.dependsOn ?? []).find(
           (d) => resultByAgent.get(d)?.status !== "ok",
         );
