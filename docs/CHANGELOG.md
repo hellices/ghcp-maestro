@@ -29,6 +29,12 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   `augmentPromptWithDeps`. Dependents of a failed dependency are persisted as
   a new `skipped` status without invoking the adapter, so `/maestro-resume`
   reruns them. Plans without `dependsOn` behave exactly as before. (#21)
+- **Partial-failure disclosure in synthesis.** `agentDigest` renders non-`ok`
+  results as `## <agent> (FAILED: <status>)` blocks with the error text;
+  `buildSynthPrompt` adds a "state explicitly which angles are missing"
+  instruction when any subagent failed (all-ok prompts are byte-identical to
+  before); the task workflow logs a `coverage: N/M subtasks ok (…)` line next
+  to the final answer. Both surfaces share the change via `core/synth.mjs`. (#22)
 
 ### Fixed
 - **Resume now reruns failed agents.** `spawn` replays only cached `ok` records

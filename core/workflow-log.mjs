@@ -5,12 +5,14 @@
 /**
  * @typedef {{
  *   spec: { agent?: string },
- *   status: string,
+ *   status?: string,
+ *   error?: string,
  *   cached?: boolean,
  *   startedAt: number,
  *   finishedAt: number,
  *   output?: { text?: string },
- * }} AgentResultLike
+ * }} AgentResultLike - `status` may be absent on digest-only inputs (treated
+ *   as ok); `error` carries the failure text rendered in FAILED blocks.
  */
 
 function text(result) {
@@ -89,10 +91,39 @@ export function allFailed(results) {
 export function agentDigest(results, opts = {}) {
   return results
     .map((r) => {
+      // Non-ok results are disclosed, not silently dropped (#22): the synth
+      // agent must know an angle is missing rather than assume full coverage.
+      if (r.status && r.status !== "ok") {
+        const reason = r.error ? ` — ${r.error}` : "";
+        return `## ${r.spec.agent} (FAILED: ${r.status})\n(this angle is missing${reason})`;
+      }
       const body = text(r) || (opts.emptyPlaceholder ?? "");
       return `## ${r.spec.agent}\n${body}`;
     })
     .join("\n\n");
+}
+
+/**
+ * The "coverage: N/M subtasks ok (…)" line logged with the final answer, so a
+ * partially-failed fan-out is visible at a glance.
+ *
+ * @param {string} runId
+ * @param {AgentResultLike[]} results
+ * @returns {string}
+ */
+export function coverageLine(runId, results) {
+  const ok = results.filter((r) => r.status === "ok").length;
+  const base = `ghcp-maestro/${runId}: coverage: ${ok}/${results.length} subtasks ok`;
+  if (ok === results.length) return base;
+  const counts = new Map();
+  for (const r of results) {
+    if (r.status !== "ok") counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+  }
+  const detail = [...counts.keys()]
+    .sort()
+    .map((s) => `${counts.get(s)} ${s}`)
+    .join(", ");
+  return `${base} (${detail})`;
 }
 
 /**

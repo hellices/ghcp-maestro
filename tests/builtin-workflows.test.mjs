@@ -273,3 +273,38 @@ test("gate deselecting a dependency skips its dependents instead of crashing", a
     assert.ok(logs.some((l) => /explore\/b skipped — dependency "a"/.test(l)));
   });
 });
+
+// --- Partial-failure disclosure (#22) ----------------------------------------
+
+test("task workflow logs a coverage line and feeds failures to synth", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let synthPrompt = "";
+    const adapter = {
+      name: "partial",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        if (spec.agent === "b") throw new Error("b always fails");
+        if (spec.agent === "synth") synthPrompt = spec.prompt;
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => adapter,
+      env: { GHCP_MAESTRO_RETRIES: "0" },
+    });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(session.logs.some((l) => /coverage: 2\/3 subtasks ok \(1 error\)/.test(l)));
+    assert.match(synthPrompt, /## b \(FAILED: error\)/);
+    assert.match(synthPrompt, /state explicitly which angles are missing/);
+  });
+});

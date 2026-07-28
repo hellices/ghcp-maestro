@@ -20,10 +20,17 @@ import { agentDigest } from "./workflow-log.mjs";
  */
 export function buildSynthPrompt({ task, results }) {
   const digest = agentDigest(results ?? [], { emptyPlaceholder: "(no output)" });
+  const anyFailed = (results ?? []).some((r) => r.status && r.status !== "ok");
   return [
     "You are a synthesis agent. Several independent subagents tackled different parts of a single task.",
     "Merge their outputs into a coherent final answer to the original task.",
     "Be concrete, deduplicate, surface disagreements, and end with a short 'next actions' list of at most 5 items.",
+    // Disclosed only when needed so the all-ok prompt stays byte-identical.
+    ...(anyFailed
+      ? [
+          "Some subagents FAILED (marked below). Do not invent their contribution: state explicitly which angles are missing and how that limits the answer.",
+        ]
+      : []),
     "",
     `Original task: ${task}`,
     "",
