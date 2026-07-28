@@ -201,16 +201,16 @@ test("crossCheck aggregates support across sources", async () => {
 });
 
 test("crossCheck ignores undecided (failed) verdicts in the rate", async () => {
-  let n = 0;
+  // Source "a" is persistently down (fails every attempt, so the verdict stays
+  // undecided even with spawn's auto-retry); retries: 0 keeps the test fast.
   const adapter = {
     name: "mixed",
-    async invoke() {
-      n += 1;
-      if (n === 1) throw new Error("source down");
+    async invoke(spec) {
+      if (spec.prompt.includes("perspective: a")) throw new Error("source down");
       return { text: "SUPPORTED: YES" };
     },
   };
-  const { checked } = await crossCheck(["claim"], { adapter, sources: ["a", "b"] });
+  const { checked } = await crossCheck(["claim"], { adapter, sources: ["a", "b"], retries: 0 });
   // one verdict null (failed), one YES → rate 1/1 = 1
   assert.equal(checked[0].supportRate, 1);
   assert.equal(checked[0].verdicts.filter((v) => v.supported === null).length, 1);
