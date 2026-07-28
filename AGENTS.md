@@ -188,15 +188,25 @@ Phase 6 / **M6 release** plus **M4.x** are done. On top of the M4 task workflow
   `showRuns` / `resumeRun` / `stopRun`) are shared, so both surfaces stay in
   lock-step and `extension.mjs` is a thin composition root.
 - **CI / static analysis** — ESLint flat config + `.github/workflows/ci.yml`
-  (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`. 260+ unit tests.
+  (lint + `node --check` + `node:test`, Node 20/22) + `codeql.yml`.
 - **M7 VS Code surface** — `vscode-extension/` chat participant + runs TreeView +
   console panel over the shared core (`runtime-bridge.mjs` is the surface-neutral
   orchestrator; `vscode-extension/extension.mjs` is the only vscode-coupled file).
 - **Run cancellation** — `core/run-registry.mjs`: process-local runId →
   AbortController registry; `/maestro-stop` aborts in-flight agents, `runPhase`
   wires the registry signal by default.
+- **Research-driven hardening (2026-07)** — always-on token accounting
+  (`tokensUsed` in manifest, `/maestros` shows it; caps stay opt-in via
+  `GHCP_MAESTRO_BUDGET_TOKENS`), untrusted-fencing of all agent-produced
+  content spliced into prompts (`core/plan.mjs` sentinels, #33), opt-in
+  per-label model routing (`core/model-routes.mjs`,
+  `GHCP_MAESTRO_MODEL_ROUTES`, #17), opt-in verify phase before synth
+  (`GHCP_MAESTRO_VERIFY`, `buildVerifyPrompt`, #31), and always-on OTel
+  GenAI-style `trace.json` export per terminal run (`core/trace.mjs`, #32).
+  Design rule: **visibility always-on, cost-inducing behavior opt-in**.
 
 The runtime is still zero-deps (eslint and friends are devDependencies only).
+350+ unit tests.
 
 Next: real-time in-TUI run monitoring (tracked as a separate issue), release
 polish.
