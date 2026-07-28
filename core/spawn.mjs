@@ -27,7 +27,8 @@ import { runWithConcurrency } from "./concurrency.mjs";
  * @property {string} [error]
  * @property {number} startedAt
  * @property {number} finishedAt
- * @property {number} [attempts] total adapter attempts made (>= 1; absent on cached replays)
+ * @property {number} [attempts] total adapter attempts made (>= 1); cached
+ *   replays carry the value persisted by the original run
  *
  * @typedef {Object} SubagentAdapter
  * @property {string} name
@@ -122,8 +123,10 @@ export async function spawn(spec, opts) {
     attempt += 1;
     result = await attemptSpawn(spec, id, adapter, opts);
     if (result.status !== "error" || attempt > retries) break;
-    if (opts.signal?.aborted) break;
     try {
+      // sleep rejects immediately when the signal is already aborted, so an
+      // abort landing anywhere between the failed attempt and the backoff is
+      // funneled into the catch below.
       await sleep(retryBackoffMs(retryBaseMs, attempt), opts.signal);
     } catch {
       // Run was stopped while waiting to retry: surface that as aborted (the

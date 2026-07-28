@@ -171,3 +171,46 @@ test("retryBackoffMs doubles per attempt with bounded jitter", () => {
   assert.equal(retryBackoffMs(100, 2, () => 1), 200);
   assert.equal(retryBackoffMs(100, 3, () => 1), 400);
 });
+
+test("abort raised during a failing attempt surfaces aborted, not error", async () => {
+  // Reviewer finding (PR #25): if the run signal aborts while the adapter is
+  // failing (after the error attempt, before the backoff sleep), spawn must
+  // report the deliberate outcome — aborted — not the transient error.
+  const ac = new AbortController();
+  const adapter = {
+    name: "fail-then-abort",
+    async invoke() {
+      ac.abort(); // signal aborts while the attempt is in flight
+      throw new Error("transient blip");
+    },
+  };
+  const res = await spawn(
+    { prompt: "p", id: "x" },
+    { adapter, retries: 2, retryBaseMs: 1, signal: ac.signal },
+  );
+  assert.equal(res.status, "aborted");
+  assert.match(res.error, /transient blip/);
+  assert.equal(res.attempts, 1);
+});
+
+test("abort landing between a failed attempt and its backoff surfaces aborted", async () => {
+  // Reviewer finding (PR #25): if the signal aborts after an attempt was
+  // classified as a plain error but before the retry loop consults the signal,
+  // spawn must still surface aborted (the deliberate outcome), not error.
+  // Two microtask hops land the abort exactly in that gap: hop 1 runs before
+  // the catch classification, hop 2 after it but before the loop's check.
+  const ac = new AbortController();
+  const adapter = {
+    name: "fail-then-late-abort",
+    async invoke() {
+      queueMicrotask(() => queueMicrotask(() => ac.abort()));
+      throw new Error("transient blip");
+    },
+  };
+  const res = await spawn(
+    { prompt: "p", id: "x" },
+    { adapter, retries: 2, retryBaseMs: 5, signal: ac.signal },
+  );
+  assert.equal(res.status, "aborted");
+  assert.match(res.error, /transient blip/);
+});
