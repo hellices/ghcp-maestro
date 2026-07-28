@@ -19,6 +19,7 @@ import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName } from "./plan.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
+import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { buildSynthPrompt } from "./synth.mjs";
 import {
   exploreResultLine,
@@ -236,9 +237,15 @@ export function createBuiltinWorkflows(deps) {
     const run = opts.run ?? (await createRun({ workflow: "task", args: { task } }));
     const runId = run.runId;
     const adapter = getAdapter();
+    // Per-run token budget (#14): accumulates per-turn usage across ALL phases;
+    // when exceeded, un-started agents are skipped and the run soft-stops.
+    const budget = createBudgetTracker(opts.budgetTokens ?? envBudgetTokens(env));
     await session.log(
       `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
     );
+    if (budget.limit) {
+      await session.log(`ghcp-maestro/${runId}: token budget: ${budget.limit} tokens`);
+    }
     await logBackgroundHint(session, runId, opts);
 
     // Phase 1 — plan: ask the LLM to decompose the task.
@@ -251,7 +258,7 @@ export function createBuiltinWorkflows(deps) {
     };
     const {
       results: [planResult],
-    } = await runPhase([planSpec], { run, runId, phase: "plan", adapter });
+    } = await runPhase([planSpec], { run, runId, phase: "plan", adapter, budget });
     if (planResult.status !== "ok") {
       return failRun(
         session,
@@ -282,7 +289,7 @@ export function createBuiltinWorkflows(deps) {
       };
       const {
         results: [retryResult],
-      } = await runPhase([retrySpec], { run, runId, phase: "plan", adapter });
+      } = await runPhase([retrySpec], { run, runId, phase: "plan", adapter, budget });
       if (retryResult.status !== "ok") {
         return failRun(
           session,
@@ -305,6 +312,18 @@ export function createBuiltinWorkflows(deps) {
       `ghcp-maestro/${runId}: plan produced ${specs.length} subtask(s): ${specs.map((s) => s.agent).join(", ")}`,
     );
 
+    // Cost visibility at the gate (#14): a coarse run-size signal (subtasks +
+    // plan + synth) and an advisory warning for large fan-outs.
+    const totalAgents = specs.length + 2;
+    const estimate = `est. run size: ${estimateRunSize(totalAgents)} (${totalAgents} agents incl. plan+synth)`;
+    await session.log(`ghcp-maestro/${runId}: ${estimate}`);
+    if (specs.length >= envLargeRunAgents(env)) {
+      await session.log(
+        `ghcp-maestro/${runId}: large fan-out: ${specs.length} subtask(s) — each runs its own child session; consider narrowing the selection at the gate`,
+        { level: "warning" },
+      );
+    }
+
     // M4.x — pre-approval gate. On an interactive host, let the user review the
     // subtasks and approve (or drop a subset / abort) before the expensive
     // fan-out. Non-interactive hosts, resume replays, and an explicit
@@ -319,6 +338,7 @@ export function createBuiltinWorkflows(deps) {
       ui: gateUi,
       capabilities: session.capabilities,
       autoApprove,
+      estimate,
       log: (msg, options) => session.log(`ghcp-maestro/${runId}: ${msg}`, options),
     });
     if (!gate.approved) {
@@ -352,6 +372,7 @@ export function createBuiltinWorkflows(deps) {
       runId,
       phase: "explore",
       adapter,
+      budget,
     });
     await logExploreResults({
       runId,
@@ -373,6 +394,19 @@ export function createBuiltinWorkflows(deps) {
       );
     }
 
+    // Budget soft-stop (#14): don't schedule the synth agent once the cap is
+    // blown. The run stays resumable — /maestro-resume replays the cached ok
+    // subtasks and reruns only the skipped/failed ones under a fresh budget.
+    if (budget.exceeded()) {
+      releaseRun(runId);
+      await run.patchManifest({ status: "stopped" });
+      await session.log(
+        `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before synth; finish it later with /maestro-resume ${runId}`,
+        { level: "warning" },
+      );
+      return run;
+    }
+
     // Phase 3 — synth: merge into a single answer to the original task.
     await session.log(`ghcp-maestro/${runId}: phase=synth agents=1`);
     const synthSpec = {
@@ -384,7 +418,7 @@ export function createBuiltinWorkflows(deps) {
     const {
       results: [synth],
       elapsedMs: phase2Elapsed,
-    } = await runPhase([synthSpec], { run, runId, phase: "synth", adapter });
+    } = await runPhase([synthSpec], { run, runId, phase: "synth", adapter, budget });
     await session.log(synthStatusLine(runId, synth, { wallMs: phase2Elapsed }));
     await session.log(labeledDumpLine(runId, "FINAL ANSWER", synth));
 

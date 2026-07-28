@@ -92,7 +92,7 @@ const DEFAULT_RETRY_BASE_MS = 1_000;
  * result is returned with status `aborted` (original error text preserved).
  *
  * @param {AgentSpec} spec
- * @param {{ adapter: SubagentAdapter, signal?: AbortSignal, runHandle?: { readAgent: Function, writeAgent: Function }, onProgress?: (evt: object) => void, retries?: number, retryBaseMs?: number }} opts
+ * @param {{ adapter: SubagentAdapter, signal?: AbortSignal, runHandle?: { readAgent: Function, writeAgent: Function }, onProgress?: (evt: object) => void, retries?: number, retryBaseMs?: number, budget?: { add: (n: unknown) => void, exceeded: () => boolean } }} opts
  * @returns {Promise<AgentResult>}
  */
 export async function spawn(spec, opts) {
@@ -110,6 +110,25 @@ export async function spawn(spec, opts) {
     if (cached && cached.status === "ok") {
       return { ...cached, cached: true };
     }
+  }
+
+  // Budget soft-stop (#14): once the run's token budget is exceeded, agents not
+  // yet scheduled are skipped without invoking the adapter. In-flight agents
+  // finish normally, and the skipped record persists as non-ok so the run stays
+  // resumable (a later /maestro-resume with a fresh budget reruns it).
+  if (opts.budget?.exceeded()) {
+    const t = Date.now();
+    const result = {
+      id,
+      spec,
+      status: "aborted",
+      error: "token budget exceeded — agent skipped before start",
+      startedAt: t,
+      finishedAt: t,
+      attempts: 0,
+    };
+    if (runHandle && spec.id) await runHandle.writeAgent({ agentId: spec.id, ...result });
+    return result;
   }
 
   const retries =
@@ -151,7 +170,7 @@ export async function spawn(spec, opts) {
  * @param {AgentSpec} spec
  * @param {string} id
  * @param {SubagentAdapter} adapter
- * @param {{ signal?: AbortSignal, onProgress?: (evt: object) => void }} opts
+ * @param {{ signal?: AbortSignal, onProgress?: (evt: object) => void, budget?: { add: (n: unknown) => void } }} opts
  * @returns {Promise<AgentResult>}
  */
 async function attemptSpawn(spec, id, adapter, opts) {
@@ -162,20 +181,24 @@ async function attemptSpawn(spec, id, adapter, opts) {
 
   let result;
   try {
-    const onProgress = opts.onProgress
-      ? (partial) => {
-          try {
-            opts.onProgress({
-              ...partial,
-              agent: spec.agent ?? null,
-              specId: id,
-              ts: Date.now(),
-            });
-          } catch {
-            // monitoring is best-effort: never let it break the spawn
+    // The wrapper exists when anyone consumes progress: the caller's sink
+    // and/or a budget tracker feeding on per-turn token counts.
+    const onProgress =
+      opts.onProgress || opts.budget
+        ? (partial) => {
+            try {
+              if (typeof partial?.tokens === "number") opts.budget?.add(partial.tokens);
+              opts.onProgress?.({
+                ...partial,
+                agent: spec.agent ?? null,
+                specId: id,
+                ts: Date.now(),
+              });
+            } catch {
+              // monitoring is best-effort: never let it break the spawn
+            }
           }
-        }
-      : undefined;
+        : undefined;
     const output = await adapter.invoke(spec, { signal: timeoutCtx.signal, onProgress });
     result = {
       id,
@@ -222,6 +245,7 @@ async function attemptSpawn(spec, id, adapter, opts) {
  *   onProgress?: (evt: object) => void,
  *   retries?: number,
  *   retryBaseMs?: number,
+ *   budget?: { add: (n: unknown) => void, exceeded: () => boolean },
  * }} opts
  * @returns {Promise<AgentResult[]>}
  */
@@ -242,6 +266,7 @@ export async function spawnAll(specs, opts) {
         onProgress: opts.onProgress,
         retries: opts.retries,
         retryBaseMs: opts.retryBaseMs,
+        budget: opts.budget,
       }),
   );
   return runWithConcurrency(tasks, { concurrency, signal: opts?.signal });
