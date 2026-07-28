@@ -7,6 +7,18 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **`/maestro install <source> [--force]` — one-command workflow install.**
+  New `core/workflow-install.mjs`: accepts a github.com blob URL, a
+  raw.githubusercontent.com URL, or `owner/repo/path/flow.mjs[@ref]` shorthand
+  (ref defaults to `main`; https only), downloads the file (256 KB cap, checked
+  against Content-Length before the body is read; redirects refused so a raw
+  URL cannot bounce off GitHub), and validates it **without executing it** —
+  `node --check` parse + default/`run` export scan on a quarantined temp copy —
+  before writing to the *user* workflow dir; project workflows still shadow
+  it. Existing names are never overwritten without `--force`, installs confirm
+  via elicitation when the host supports it (dialog errors fail closed), and
+  every install prints a review-before-running warning. `install` joins the
+  reserved workflow names. (#23)
 - **Agent auto-retry with exponential backoff.** `spawn`/`spawnAll` retry
   `error`-status attempts (API blips, rate limits) with exponential backoff +
   jitter — `GHCP_MAESTRO_RETRIES` extra attempts (default 1, `0` disables).
