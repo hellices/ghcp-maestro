@@ -45,6 +45,13 @@ test("budget tracker accumulates and reports exceeded", () => {
   assert.equal(b.exceeded(), true);
 });
 
+test("budget tracker treats hitting the cap exactly as exceeded", () => {
+  const b = createBudgetTracker(1000);
+  b.add(1000);
+  assert.equal(b.used(), 1000);
+  assert.equal(b.exceeded(), true);
+});
+
 test("budget tracker without a limit never exceeds", () => {
   const b = createBudgetTracker(null);
   b.add(10_000_000);

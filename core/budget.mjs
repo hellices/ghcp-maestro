@@ -51,7 +51,9 @@ export function createBudgetTracker(limitTokens) {
       if (typeof n === "number" && Number.isFinite(n) && n > 0) used += n;
     },
     used: () => used,
-    exceeded: () => limit !== null && used > limit,
+    // Hitting the cap exactly counts as exceeded — the next agent must not
+    // start once the budget is fully consumed.
+    exceeded: () => limit !== null && used >= limit,
   };
 }
 
