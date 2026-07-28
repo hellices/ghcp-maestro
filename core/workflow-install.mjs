@@ -2,21 +2,24 @@
 // workflow dir, so sharing a workflow is one command instead of a manual
 // download-and-copy.
 //
-// Only GitHub sources are accepted (blob URL, raw URL, or owner/repo/path@ref
-// shorthand) and only after the module passes the same shape validation that
-// /maestro run applies (loadSavedWorkflow on a quarantined temp copy). The
-// file lands in the *user* dir — a project-level workflow of the same name
-// still shadows it, preserving the project > user > bundled priority.
+// Only GitHub https sources are accepted (blob URL, raw URL, or
+// owner/repo/path@ref shorthand), the module is validated without ever being
+// executed (node --check parse + export scan on a quarantined temp copy), and
+// the file lands in the *user* dir — a project-level workflow of the same
+// name still shadows it, preserving the project > user > bundled priority.
 
 import { mkdtemp, rm, mkdir, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import {
   validateWorkflowName,
   defaultWorkflowDirs,
-  loadSavedWorkflow,
 } from "./saved-workflows.mjs";
+
+const execFileAsync = promisify(execFile);
 
 /** Hard cap on a downloaded workflow file. Saved workflows are small scripts;
  * anything near this size is almost certainly a mistake (or bundled deps,
@@ -32,6 +35,11 @@ const RAW_HOST = "raw.githubusercontent.com";
  * - `https://github.com/<owner>/<repo>/blob/<ref>/<path>.mjs`
  * - `https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>.mjs`
  * - `<owner>/<repo>/<path>.mjs[@ref]` (shorthand; ref defaults to `main`)
+ *
+ * Refs containing `/` (e.g. `feature/x` branches) are not supported in the
+ * blob-URL form — the first path segment after /blob/ is taken as the ref.
+ * Use a tag/short branch, the raw URL, or the shorthand's `@ref` instead
+ * (a mis-split simply 404s at download time; nothing is written).
  *
  * @param {string} source
  * @returns {{ url: string, name: string }}
@@ -77,22 +85,44 @@ export function parseWorkflowSource(source) {
 }
 
 /**
- * Validate the downloaded code by importing a quarantined temp copy through
- * loadSavedWorkflow — the exact check /maestro run performs, so an installed
- * workflow can never be un-runnable. A syntax error surfaces here too.
+ * Validate downloaded code WITHOUT executing it. Dynamic import() would run
+ * the module's top-level statements — unacceptable for just-downloaded
+ * third-party code — so instead:
+ * 1. `node --check` on a quarantined temp copy parses the file (ESM, via the
+ *    .mjs extension) and surfaces syntax errors with zero evaluation.
+ * 2. A source scan requires a default/`run` export, mirroring the shape
+ *    loadSavedWorkflow enforces at /maestro run time.
+ * The scan is intentionally permissive: a false accept just means /maestro
+ * run reports the real shape error later; nothing is ever executed here.
  *
  * @param {string} code
- * @returns {Promise<{ description: string }>}
  */
-async function validateWorkflowModule(code) {
+async function validateWorkflowCode(code) {
   const dir = await mkdtemp(join(tmpdir(), "ghcp-maestro-verify-"));
-  const file = join(dir, `candidate-${Date.now()}.mjs`);
+  const file = join(dir, "candidate.mjs");
   try {
     await writeFile(file, code, "utf8");
-    const { description } = await loadSavedWorkflow(file);
-    return { description };
+    try {
+      await execFileAsync(process.execPath, ["--check", file]);
+    } catch (err) {
+      const stderr = String(err?.stderr ?? "");
+      const detail =
+        stderr.split("\n").find((l) => l.includes("SyntaxError")) ??
+        stderr.trim().split("\n").pop() ??
+        String(err?.message ?? err);
+      throw new SyntaxError(detail.trim() || "failed to parse workflow module");
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+
+  const hasRunExport =
+    /\bexport\s+default\b/.test(code) ||
+    /\bexport\s+(?:async\s+)?function\s+run\b/.test(code) ||
+    /\bexport\s+(?:const|let|var)\s+run\b/.test(code) ||
+    /\bexport\s*\{[^}]*\b(?:run|default)\b[^}]*\}/.test(code);
+  if (!hasRunExport) {
+    throw new Error("workflow must default-export (or export 'run') a function");
   }
 }
 
@@ -214,9 +244,8 @@ export async function installWorkflowCommand(session, arg, opts = {}) {
     return;
   }
 
-  let description;
   try {
-    ({ description } = await validateWorkflowModule(code));
+    await validateWorkflowCode(code);
   } catch (err) {
     const kind = err instanceof SyntaxError ? "syntax error" : "invalid workflow";
     await session.log(`ghcp-maestro: install: ${kind}: ${err?.message ?? err}`, {
@@ -228,9 +257,7 @@ export async function installWorkflowCommand(session, arg, opts = {}) {
   await mkdir(destDir, { recursive: true });
   await writeFile(destFile, code, "utf8");
 
-  await session.log(
-    `ghcp-maestro: installed '${name}' — ${description} → ${destFile}`,
-  );
+  await session.log(`ghcp-maestro: installed '${name}' → ${destFile}`);
   await session.log(
     `ghcp-maestro: run it with: /maestro run ${name}. Note: installed workflows are third-party code — review ${destFile} before running.`,
   );

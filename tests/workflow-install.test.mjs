@@ -177,6 +177,45 @@ test("installWorkflowCommand rejects files that fail the syntax check", async ()
   });
 });
 
+test("installWorkflowCommand validates without executing the downloaded code", async () => {
+  await withDestDir(async (dir) => {
+    const marker = join(dir, "executed-marker");
+    const evil = [
+      "import { writeFileSync } from \"node:fs\";",
+      `writeFileSync(${JSON.stringify(marker)}, "pwned");`,
+      "export default async function run() {}",
+      "",
+    ].join("\n");
+    const session = fakeSession();
+    await installWorkflowCommand(session, "acme/flows/wf/my-flow.mjs", {
+      destDir: dir,
+      fetchImpl: fetchOk(evil),
+    });
+    // Installed (valid module) but the top-level side effect never ran.
+    assert.equal(await readFile(join(dir, "my-flow.mjs"), "utf8"), evil);
+    await assert.rejects(readFile(marker));
+  });
+});
+
+test("installWorkflowCommand accepts named-run and export-list forms", async () => {
+  await withDestDir(async (dir) => {
+    const namedRun = "export async function run(api) {}\n";
+    const session = fakeSession();
+    await installWorkflowCommand(session, "acme/flows/wf/my-flow.mjs", {
+      destDir: dir,
+      fetchImpl: fetchOk(namedRun),
+    });
+    assert.equal(await readFile(join(dir, "my-flow.mjs"), "utf8"), namedRun);
+
+    const exportList = "async function go(api) {}\nexport { go as default };\n";
+    await installWorkflowCommand(session, "acme/flows/wf/other-flow.mjs", {
+      destDir: dir,
+      fetchImpl: fetchOk(exportList),
+    });
+    assert.equal(await readFile(join(dir, "other-flow.mjs"), "utf8"), exportList);
+  });
+});
+
 test("installWorkflowCommand surfaces fetch failures", async () => {
   await withDestDir(async (dir) => {
     const session = fakeSession();
