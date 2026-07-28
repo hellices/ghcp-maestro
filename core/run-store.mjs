@@ -136,7 +136,10 @@ function makeHandle(runDir, manifest) {
    * @typedef {Object} AgentRecord
    * @property {string} agentId
    * @property {unknown} spec
-   * @property {"ok"|"error"|"timeout"|"aborted"} status
+   * @property {"ok"|"error"|"timeout"|"aborted"|"skipped"} status - "skipped"
+   *   is written by workflows for dependents of a failed/deselected dependency
+   *   (never produced by spawn itself); like every non-ok status it reruns on
+   *   resume.
    * @property {unknown} [output]
    * @property {string} [error]
    * @property {number} startedAt

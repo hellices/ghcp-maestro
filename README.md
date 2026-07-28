@@ -21,6 +21,9 @@ external service.
 **Automatic task decomposition.**
 `/maestro task <natural language>` asks a `plan` agent to break the task into
 3–6 independent subtasks — you describe the goal, it figures out the pieces.
+Plans may declare `dependsOn` between subtasks: dependents run in a later
+wave with their dependencies' outputs injected into the prompt, and if a
+dependency fails its dependents are skipped instead of running blind.
 
 **Real parallel fan-out with isolation.**
 Each subtask runs in its own child Copilot session, concurrently (default 16 at

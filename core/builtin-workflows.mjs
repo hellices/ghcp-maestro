@@ -17,7 +17,7 @@ import { failRun, completeRun } from "./run-flow.mjs";
 import { releaseRun } from "./run-registry.mjs";
 import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
-import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName } from "./plan.mjs";
+import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, augmentPromptWithDeps } from "./plan.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { buildSynthPrompt } from "./synth.mjs";
@@ -359,21 +359,81 @@ export function createBuiltinWorkflows(deps) {
       specs = gate.selected;
     }
 
-    // Phase 2 — explore: fan out the planned specs.
-    await session.log(`ghcp-maestro/${runId}: phase=explore agents=${specs.length} (parallel)`);
+    // Phase 2 — explore: fan out the planned specs, layer by layer (#21).
+    // Independent specs land in layer 0 and run in one parallel wave exactly as
+    // before; specs with `dependsOn` run in later layers with their
+    // dependencies' outputs appended to the prompt. A dependent whose
+    // dependency did not finish `ok` is recorded as `skipped` without ever
+    // invoking the adapter (the record persists, so /maestro-resume reruns it).
     const exploreSpecs = specs.map((s, i) => ({
       id: `explore-${i}-${sanitizeAgentName(s.agent)}`,
       agent: s.agent,
       prompt: s.prompt,
+      ...(s.dependsOn ? { dependsOn: s.dependsOn } : {}),
       timeoutMs: TIMEOUT_AGENT_MS,
     }));
-    const { results: exploreResults, elapsedMs: phase1Elapsed } = await runPhase(exploreSpecs, {
-      run,
-      runId,
-      phase: "explore",
-      adapter,
-      budget,
-    });
+    // The gate may have deselected a dependency. Layer on deps filtered to the
+    // selected set so planLayers can't throw "unknown dependency"; the skip
+    // check below still consults the ORIGINAL dependsOn, so a dependent of a
+    // deselected subtask is skipped (its dep never lands in resultByAgent).
+    const selectedNames = new Set(exploreSpecs.map((s) => s.agent));
+    const layers = planLayers(
+      exploreSpecs.map((s) =>
+        s.dependsOn ? { ...s, dependsOn: s.dependsOn.filter((d) => selectedNames.has(d)) } : s,
+      ),
+    );
+    const specByAgent = new Map(exploreSpecs.map((s) => [s.agent, s]));
+    await session.log(
+      `ghcp-maestro/${runId}: phase=explore agents=${specs.length}${layers.length > 1 ? ` layers=${layers.length} (topological)` : " (parallel)"}`,
+    );
+    const resultByAgent = new Map();
+    let phase1Elapsed = 0;
+    for (const layer of layers) {
+      const runnable = [];
+      for (const layerSpec of layer) {
+        const spec = specByAgent.get(layerSpec.agent);
+        const failedDep = (spec.dependsOn ?? []).find(
+          (d) => resultByAgent.get(d)?.status !== "ok",
+        );
+        if (failedDep !== undefined) {
+          const now = Date.now();
+          const skipped = {
+            id: spec.id,
+            spec,
+            status: "skipped",
+            error: `dependency "${failedDep}" did not complete — subtask skipped`,
+            startedAt: now,
+            finishedAt: now,
+            attempts: 0,
+          };
+          await run.writeAgent({ agentId: spec.id, ...skipped });
+          resultByAgent.set(spec.agent, skipped);
+          await session.log(
+            `ghcp-maestro/${runId}: explore/${spec.agent} skipped — dependency "${failedDep}" did not complete`,
+            { level: "warning" },
+          );
+          continue;
+        }
+        const deps = (spec.dependsOn ?? []).map((d) => ({
+          agent: d,
+          text: resultByAgent.get(d)?.output?.text ?? "",
+        }));
+        runnable.push(
+          deps.length > 0 ? { ...spec, prompt: augmentPromptWithDeps(spec.prompt, deps) } : spec,
+        );
+      }
+      if (runnable.length === 0) continue;
+      const { results, elapsedMs } = await runPhase(runnable, {
+        run,
+        runId,
+        phase: "explore",
+        adapter,
+        budget,
+      });
+      phase1Elapsed += elapsedMs;
+      for (const r of results) resultByAgent.set(r.spec.agent, r);
+    }
+    const exploreResults = exploreSpecs.map((s) => resultByAgent.get(s.agent));
     await logExploreResults({
       runId,
       results: exploreResults,

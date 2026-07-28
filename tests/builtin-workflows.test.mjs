@@ -159,3 +159,117 @@ test("task workflow soft-stops before synth when the token budget is exceeded", 
     assert.ok(session.logs.some((l) => /maestro-resume/.test(l)));
   });
 });
+
+// --- DAG plans (#21) ---------------------------------------------------------
+
+test("task workflow runs dependsOn subtasks in layers with augmented prompts", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = new Map();
+    const adapter = {
+      name: "dag",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb", dependsOn: ["a"] },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        prompts.set(spec.agent, spec.prompt);
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    // b's prompt is augmented with a's output; a and c stay untouched.
+    assert.match(prompts.get("b"), /^pb/);
+    assert.match(prompts.get("b"), /Dependency outputs/);
+    assert.match(prompts.get("b"), /out-a/);
+    assert.equal(prompts.get("a"), "pa");
+    assert.equal(prompts.get("c"), "pc");
+    assert.ok(session.logs.some((l) => /task workflow complete — 5 agents across 3 phases/.test(l)));
+  });
+});
+
+test("task workflow skips dependents of failed subtasks without invoking them", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const invoked = [];
+    const adapter = {
+      name: "dag-fail",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb", dependsOn: ["a"] },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        invoked.push(spec.agent);
+        if (spec.agent === "a") throw new Error("a always fails");
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => adapter,
+      env: { GHCP_MAESTRO_RETRIES: "0" },
+    });
+    const run = await runTaskWorkflow(session, "do the thing");
+    // b is never invoked; c and synth still run, so the run completes.
+    assert.ok(!invoked.includes("b"), `b must not be invoked, got: ${invoked.join(", ")}`);
+    assert.ok(invoked.includes("c"));
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(session.logs.some((l) => /explore\/b .*skipped/.test(l) || /skipped.*dependency/.test(l)));
+    // The skipped record is persisted so /maestro-resume reruns it.
+    const rec = await run.readAgent("explore-1-b");
+    assert.equal(rec.status, "skipped");
+  });
+});
+
+test("gate deselecting a dependency skips its dependents instead of crashing", async () => {
+  await withTempDataDir(async () => {
+    // Interactive session whose approval dialog deselects subtask 0 ("a") and
+    // keeps "b" (dependsOn a) and "c" — the DAG must degrade to skipping b.
+    const logs = [];
+    const session = {
+      logs,
+      capabilities: { ui: { elicitation: true } },
+      ui: {
+        elicitation: async () => ({ action: "accept", content: { subtasks: ["1", "2"] } }),
+      },
+      log: async (msg) => {
+        logs.push(String(msg));
+      },
+    };
+    const invoked = [];
+    const adapter = {
+      name: "dag-gate",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb", dependsOn: ["a"] },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        invoked.push(spec.agent);
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(!invoked.includes("a"), "a was deselected at the gate");
+    assert.ok(!invoked.includes("b"), "b depends on the deselected a");
+    assert.ok(invoked.includes("c"));
+    assert.ok(logs.some((l) => /explore\/b skipped — dependency "a"/.test(l)));
+  });
+});

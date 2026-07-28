@@ -22,7 +22,9 @@ import { runWithConcurrency } from "./concurrency.mjs";
  * @typedef {Object} AgentResult
  * @property {string} id
  * @property {AgentSpec} spec
- * @property {"ok"|"error"|"timeout"|"aborted"} status
+ * @property {"ok"|"error"|"timeout"|"aborted"|"skipped"} status - spawn itself
+ *   only produces the first four; "skipped" appears in workflow result arrays
+ *   for dependents of a failed/deselected dependency (see builtin-workflows)
  * @property {unknown} [output]
  * @property {string} [error]
  * @property {number} startedAt
