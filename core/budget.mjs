@@ -2,9 +2,12 @@
 //
 // A budget tracker accumulates the per-turn `assistant.usage` token counts the
 // adapters surface through onProgress and answers one question: has this run
-// crossed its cap? Enforcement is a *soft stop*: agents already in flight
-// finish, agents not yet scheduled are skipped (see spawn's budget check), and
-// the workflow marks the run `stopped` so it stays resumable.
+// crossed its cap? Accounting is always-on — the tracker aggregates usage even
+// with no cap set (limit=null), so runs can report their token cost. Enforcement
+// is opt-in (only when a budget is explicitly configured) and is a *soft stop*:
+// agents already in flight finish, agents not yet scheduled are skipped (see
+// spawn's budget check), and the workflow marks the run `stopped` so it stays
+// resumable.
 
 import { envInt } from "./timeouts.mjs";
 
