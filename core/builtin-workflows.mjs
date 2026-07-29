@@ -260,7 +260,11 @@ export function createBuiltinWorkflows(deps) {
     if (refs.length === 0) return { task: raw, refsBlock: "" };
     let files;
     try {
-      files = await loadFileRefs(refs, { cwd: opts.cwd, readFile: opts.readFile });
+      files = await loadFileRefs(refs, {
+        cwd: opts.cwd,
+        readFile: opts.readFile,
+        stat: opts.stat,
+      });
     } catch (err) {
       // On resume a RunHandle already exists and its manifest was just set to
       // "running" — propagate so resumeRun's failRun marks it failed instead

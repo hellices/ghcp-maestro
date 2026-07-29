@@ -43,8 +43,10 @@ Rules and limits:
 - A missing or unreadable file aborts immediately — before any agent spends
   a token.
 - `/maestro brainstorm` accepts `@file` references the same way.
-- The run manifest keeps the raw line, so `/maestro-resume` re-reads the same
-  files (and fails cleanly if a spec file has since disappeared).
+- The run manifest keeps the raw line, so `/maestro-resume` re-reads the
+  files (and fails cleanly if a spec file has since disappeared). Relative
+  paths resolve against the directory you resume from — resume from the same
+  directory to get the same files.
 - Remember every subtask prompt carries the spec: a big spec × a wide fan-out
   multiplies token cost. The gate's run-size estimate reflects prompt sizes.
 - The referenced file contents are sent to the model in every prompt — never
