@@ -140,7 +140,7 @@ export function extractWorkflowCode(text) {
   const best = blocks.sort((a, b) => b.length - a.length)[0];
   if (best) return best;
   const trimmed = raw.trim();
-  if (/^(\/\/|export\b)/.test(trimmed)) return trimmed;
+  if (/^(\/\/|\/\*|export\b)/.test(trimmed)) return trimmed;
   throw new Error("the planner reply contains no fenced code block");
 }
 

@@ -76,6 +76,7 @@ test("extractWorkflowCode takes the largest fenced block", () => {
 
 test("extractWorkflowCode accepts a bare module and rejects prose", () => {
   assert.match(extractWorkflowCode("export default async () => {};"), /^export default/);
+  assert.match(extractWorkflowCode("/* header */\nexport default async () => {};"), /^\/\* header/);
   assert.throws(() => extractWorkflowCode("I could not produce a script."), /no fenced code block/);
 });
 
