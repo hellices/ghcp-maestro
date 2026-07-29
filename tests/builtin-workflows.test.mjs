@@ -1076,6 +1076,23 @@ test("task --write fails the run (not stuck running) when HEAD moved off the tar
   });
 });
 
+test("task with opts.write persists --write in the manifest so resume replays it (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(),
+    });
+    const run = await runTaskWorkflow(session, "migrate the client", {
+      gitExec: fakeGitExec(),
+      write: true,
+    });
+    assert.equal(run.manifest.status, "complete");
+    // The manifest line carries the EFFECTIVE flags, not the raw line —
+    // otherwise /maestro-resume would silently run read-only.
+    assert.equal(run.manifest.args.task, "--write migrate the client");
+  });
+});
+
 test("task without --write keeps write-flag lookalikes in the task text (#40)", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();
