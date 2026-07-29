@@ -342,3 +342,26 @@ test("cleanupWorktrees skips worktrees whose directory is already gone", async (
   const result = await cleanupWorktrees([{ agent: "gone", dir: "/wt/gone" }], { exec });
   assert.deepEqual(result, { removed: [], kept: [] });
 });
+
+test("createWorktrees rolls back already-created worktrees when a later add fails", async () => {
+  const calls = [];
+  const exec = async (args) => {
+    calls.push(args.join(" "));
+    if (args[0] === "worktree" && args[1] === "add" && args[2].endsWith("ui")) {
+      throw new Error("fatal: disk full");
+    }
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    () =>
+      createWorktrees([{ agent: "api" }, { agent: "ui" }], {
+        exec,
+        root: "/r",
+        runId: "run1",
+      }),
+    /disk full/,
+  );
+  // The api worktree and its fresh branch were rolled back best-effort.
+  assert.ok(calls.includes(`worktree remove ${join("/r", "api")}`));
+  assert.ok(calls.includes("branch -D maestro/run1/api"));
+});

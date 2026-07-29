@@ -1011,3 +1011,30 @@ test("task without --write never touches git (#40)", async () => {
     assert.ok(!prompts.plan.includes("WRITE MODE"));
   });
 });
+
+test("task --write rejects agent ids that collide after sanitization (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const adapter = {
+      name: "collide",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "api ui", prompt: "p1", files: ["src/a"] },
+              { agent: "api_ui", prompt: "p2", files: ["src/b"] },
+              { agent: "docs", prompt: "p3", files: ["docs"] },
+            ]),
+          };
+        }
+        return { text: "x" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "--write migrate", { gitExec: fakeGitExec() });
+    // Both plan attempts return the colliding ids → the run errors out with
+    // the collision surfaced, and no worktree is ever created.
+    assert.equal(run.manifest.status, "error");
+    assert.ok(session.logs.some((l) => /collide after sanitization/.test(l)));
+  });
+});
