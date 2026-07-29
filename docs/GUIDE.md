@@ -18,6 +18,41 @@ Plans may declare `dependsOn` between subtasks: dependents run in a later
 wave with their dependencies' outputs injected into the prompt, and if a
 dependency fails its dependents are skipped instead of running blind.
 
+### `@file` references — drive a run from a markdown spec
+
+For anything too detailed to fit one chat line, write the request as a
+markdown file and reference it with `@`:
+
+```text
+/maestro task @docs/refactor-spec.md focus on the API layer first
+```
+
+The host reads each `@path` (relative to the current directory; absolute
+paths work too) **before the
+run starts** and inlines the content — fenced, with the filename — into the
+plan prompt and every subtask prompt. Each isolated child session therefore
+sees the full spec without having to rediscover the file. The one-line text
+that remains acts as the trigger and steer; the spec drives correctness.
+
+Rules and limits:
+
+- Up to 4 files per run; each file is capped at 16 000 characters of content
+  (longer files are truncated and a short truncation marker is appended).
+  The combined limit is 48 000 characters *including* those markers, so
+  several truncated files can trip it slightly earlier than 3 × 16 000.
+- A missing or unreadable file aborts immediately — before any agent spends
+  a token.
+- `/maestro brainstorm` accepts `@file` references the same way.
+- The run manifest keeps the raw line, so `/maestro-resume` re-reads the
+  files (and fails cleanly if a spec file has since disappeared). Relative
+  paths resolve against the directory you resume from — resume from the same
+  directory to get the same files.
+- Remember every subtask prompt carries the spec: a big spec × a wide fan-out
+  multiplies token cost. (The gate's low/medium/high estimate is based on
+  agent count, not prompt size — factor the spec in yourself.)
+- The referenced file contents are sent to the model in every prompt — never
+  reference files containing secrets, credentials, or other sensitive data.
+
 ### Real parallel fan-out with isolation
 
 Each subtask runs in its own child Copilot session, concurrently (default 16 at

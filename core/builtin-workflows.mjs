@@ -18,6 +18,7 @@ import { releaseRun } from "./run-registry.mjs";
 import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, augmentPromptWithDeps } from "./plan.mjs";
+import { parseFileRefs, loadFileRefs, buildFileRefsBlock } from "./task-inputs.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { envModelRoutes, resolveModel } from "./model-routes.mjs";
@@ -130,8 +131,14 @@ export function createBuiltinWorkflows(deps) {
    * Multi-angle brainstorm: 4 lenses (tech/ux/biz/risk) in parallel, then a
    * synth agent derives the strongest 3 next steps.
    */
-  async function runBrainstormWorkflow(session, topic, opts = {}) {
-    const run = opts.run ?? (await createRun({ workflow: "brainstorm", args: { topic } }));
+  async function runBrainstormWorkflow(session, rawTopic, opts = {}) {
+    // @file references (#39): same contract as the task workflow — resolve
+    // before the run exists, abort on unreadable files, keep the raw line in
+    // the manifest for resume.
+    const inputs = await resolveTaskInputs(session, rawTopic, opts);
+    if (!inputs) return null;
+    const { task: topic, refsBlock } = inputs;
+    const run = opts.run ?? (await createRun({ workflow: "brainstorm", args: { topic: rawTopic } }));
     const runId = run.runId;
     const adapter = getAdapter();
     await session.log(
@@ -174,7 +181,7 @@ export function createBuiltinWorkflows(deps) {
         `Question: ${a.ask}`,
         "",
         "Reply with 3-5 short bullet points. Be concrete and specific to this topic. No preamble, no 'as an AI', just the bullets.",
-      ].join("\n"),
+      ].join("\n") + refsBlock,
       timeoutMs: TIMEOUT_AGENT_MS,
     }));
 
@@ -241,13 +248,58 @@ export function createBuiltinWorkflows(deps) {
   // --- Task workflow (M4 — LLM-driven task decomposition) -------------------
 
   /**
+   * Resolve `@file` references (#39) out of a raw task/topic line.
+   *
+   * Returns `{ task, refsBlock }` — with the raw line untouched when there are
+   * no references (byte-identical prompts to pre-#39 runs) — or `null` after
+   * logging when any referenced file cannot be read, so callers abort before a
+   * run is created or a single token is spent.
+   */
+  async function resolveTaskInputs(session, raw, opts = {}) {
+    const { refs, task } = parseFileRefs(raw);
+    if (refs.length === 0) return { task: raw, refsBlock: "" };
+    let files;
+    try {
+      files = await loadFileRefs(refs, {
+        cwd: opts.cwd,
+        readFile: opts.readFile,
+        stat: opts.stat,
+      });
+    } catch (err) {
+      // On resume a RunHandle already exists and its manifest was just set to
+      // "running" — propagate so resumeRun's failRun marks it failed instead
+      // of leaving the run stuck. Fresh runs simply abort before creation.
+      if (opts.run) throw err;
+      await session.log(`ghcp-maestro: ${err?.message ?? err} — aborting before fan-out`, {
+        level: "error",
+      });
+      return null;
+    }
+    const totalChars = files.reduce((n, f) => n + f.content.length, 0);
+    const truncated = files.filter((f) => f.truncated).map((f) => f.path);
+    await session.log(
+      `ghcp-maestro: inlined ${files.length} @file reference(s) (${totalChars} chars${truncated.length > 0 ? `; truncated: ${truncated.join(", ")}` : ""}): ${files.map((f) => f.path).join(", ")}`,
+    );
+    return {
+      task: task || "Carry out the request described in the referenced file(s).",
+      refsBlock: buildFileRefsBlock(files),
+    };
+  }
+
+  /**
    * Generic dynamic workflow: an LLM decomposes an arbitrary task into
    * independent subtasks (plan), fans them out (explore), then merges the
    * outputs into a final answer (synth). All phases share a RunHandle so any
    * subagent that already succeeded is replayed from cache on /maestro-resume.
    */
-  async function runTaskWorkflow(session, task, opts = {}) {
-    const run = opts.run ?? (await createRun({ workflow: "task", args: { task } }));
+  async function runTaskWorkflow(session, rawTask, opts = {}) {
+    // @file references (#39): resolve before the run exists so a bad path
+    // costs nothing. The manifest keeps the RAW line — resume replays the
+    // same resolution (and correctly fails if the spec file disappeared).
+    const inputs = await resolveTaskInputs(session, rawTask, opts);
+    if (!inputs) return null;
+    const { task, refsBlock } = inputs;
+    const run = opts.run ?? (await createRun({ workflow: "task", args: { task: rawTask } }));
     const runId = run.runId;
     const adapter = getAdapter();
     // Per-run token budget (#14): accumulates per-turn usage across ALL phases;
@@ -284,7 +336,7 @@ export function createBuiltinWorkflows(deps) {
       id: "plan",
       agent: "plan",
       timeoutMs: TIMEOUT_AGENT_MS,
-      prompt: buildPlanPrompt(task),
+      prompt: buildPlanPrompt(task, undefined, undefined, refsBlock),
       ...withModel(resolveModel("plan", routes)),
     };
     const {
@@ -317,7 +369,7 @@ export function createBuiltinWorkflows(deps) {
         id: "plan-retry",
         agent: "plan",
         timeoutMs: TIMEOUT_AGENT_MS,
-        prompt: buildPlanPrompt(task, err.message, planText),
+        prompt: buildPlanPrompt(task, err.message, planText, refsBlock),
         ...withModel(resolveModel("plan", routes)),
       };
       const {
@@ -409,7 +461,10 @@ export function createBuiltinWorkflows(deps) {
     const exploreSpecs = specs.map((s, i) => ({
       id: `explore-${i}-${sanitizeAgentName(s.agent)}`,
       agent: s.agent,
-      prompt: s.prompt,
+      // Subtask prompts carry the spec too (#39): each child session is
+      // isolated, so without this it would have to rediscover the file — or
+      // worse, run blind against a one-line summary of a detailed spec.
+      prompt: s.prompt + refsBlock,
       ...(s.dependsOn ? { dependsOn: s.dependsOn } : {}),
       timeoutMs: TIMEOUT_AGENT_MS,
       ...withModel(resolveModel(`explore:${s.agent}`, routes)),
