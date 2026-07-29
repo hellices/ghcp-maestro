@@ -32,6 +32,14 @@ test("failRun merges extra manifest fields into the error patch", async () => {
   assert.equal(run.calls[0].status, "error");
 });
 
+test("failRun extraPatch cannot override the terminal status or finishedAt", async () => {
+  const session = fakeSession();
+  const run = fakeRun();
+  await failRun(session, run, "boom", { status: "stopped", finishedAt: 0 });
+  assert.equal(run.calls[0].status, "error");
+  assert.ok(run.calls[0].finishedAt > 0);
+});
+
 test("failRun patches the manifest before logging", async () => {
   const order = [];
   const session = { log: () => order.push("log") };

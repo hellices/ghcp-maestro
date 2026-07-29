@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSynthPrompt, buildVerifyPrompt } from "../core/synth.mjs";
+import { buildSynthPrompt, buildVerifyPrompt, MAX_VERIFY_REPORT_CHARS } from "../core/synth.mjs";
 
 test("buildSynthPrompt embeds the task and a per-agent digest", () => {
   const prompt = buildSynthPrompt({
@@ -125,4 +125,14 @@ test("buildSynthPrompt appends the verify report only when provided", () => {
   assert.match(withReport, /verification agent independently judged/);
   assert.match(withReport, /OVERALL: 1\/1 subtasks met the objective/);
   assert.ok(withReport.startsWith(base), "default prompt must stay byte-identical as a prefix");
+});
+
+test("buildSynthPrompt truncates a runaway verify report", () => {
+  const prompt = buildSynthPrompt({
+    task: "T",
+    results: [{ spec: { agent: "a" }, output: { text: "o" } }],
+    verifyReport: "y".repeat(MAX_VERIFY_REPORT_CHARS + 5000),
+  });
+  assert.ok(!prompt.includes("y".repeat(MAX_VERIFY_REPORT_CHARS + 1)), "report must be capped");
+  assert.ok(prompt.includes("y".repeat(MAX_VERIFY_REPORT_CHARS)), "cap keeps the leading text");
 });
