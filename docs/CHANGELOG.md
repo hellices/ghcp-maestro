@@ -7,6 +7,18 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **`/maestro compose <description>` — generate a saved workflow from a
+  natural-language description.** New `core/workflow-compose.mjs`: a planner
+  agent receives the sandboxed workflow-api reference plus the description
+  and writes the module; the result is parse-checked and scanned for any
+  escape from the injected `api` (imports, `process`, `fetch`, `eval`, …),
+  shown for review via the elicitation gate, dry-run against a token-free
+  echo adapter only after approval, and saved to the project workflows
+  directory ready for `/maestro run <name>`. `--name <kebab>` picks the
+  name, `--force` overwrites. Non-interactive hosts save nothing runnable —
+  the script lands as a `.mjs.draft` file for manual review, and a failed
+  dry-run likewise keeps only a draft. `validateWorkflowCode` is now
+  exported from `core/workflow-install.mjs` and shared by both paths. (#16)
 - **Mid-run phase gate (opt-in).** `GHCP_MAESTRO_PHASE_GATE=1` pauses the
   task workflow a second time after the fan-out completes — before the next
   spend (write-mode integration / verify / synth) — showing a per-agent
