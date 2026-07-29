@@ -11,9 +11,9 @@
 
 ![/maestro task 실행: 계획 → 승인 게이트 → 실시간 대시보드와 함께 병렬 fan-out → 종합된 최종 답변](docs/assets/demo.gif)
 
-<sub>실제 `/maestro task` 실행의 스크립트 리플레이 — 로그 라인은 런타임의 실제
-출력 포맷 그대로이고 시간만 압축되어 있다. [`vhs demo/demo.tape`](demo/demo.tape)
-로 재생성.</sub>
+<sub>`/maestro task` 실행의 스크립트 리플레이 — 로그 라인은 런타임의 실제
+출력을 가깝게 재현한 것으로, GIF 를 위해 색을 입히고 시간을 압축했다.
+[`vhs demo/demo.tape`](demo/demo.tape) 로 재생성.</sub>
 
 > ghcp-maestro 는 **orchestrator-workers** 패턴을 GitHub Copilot CLI 로 구현한
 > 것이다 — 분해 → 병렬 에이전트 fan-out → 교차 검증 → 하나의 종합 답변, 그리고
@@ -205,7 +205,8 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 ## 설정
 
 모든 튜닝은 환경 변수로 한다 — 가시성 기능은 항상 켜져 있고, 토큰을 추가로
-쓰는 것은 전부 opt-in 이다.
+쓰는 것은 전부 opt-in 이다. (진단용 프로브 설정 — `GHCP_MAESTRO_PROBE_*`,
+`GHCP_MAESTRO_TIMEOUT_PROBE_MS` — 은 의도적으로 제외.)
 
 | 변수 | 기본값 | 역할 |
 | :-- | :-- | :-- |

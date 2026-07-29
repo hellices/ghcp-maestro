@@ -4,9 +4,9 @@
 
 Output docs/assets/demo.gif
 
-Set FontSize 14
-Set Width 1180
-Set Height 640
+Set FontSize 13
+Set Width 1240
+Set Height 620
 Set Padding 16
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 0ms

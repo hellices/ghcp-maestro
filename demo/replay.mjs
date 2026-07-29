@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// Scripted replay of a real `/maestro task` session, used to render the README
+// Scripted replay of a `/maestro task` session, used to render the README
 // demo GIF (see demo/demo.tape, rendered with charmbracelet/vhs).
 //
-// This is presentation-only: it prints the exact log lines the task workflow
-// emits (core/builtin-workflows.mjs + core/workflow-log.mjs + core/monitor.mjs
-// formats) with realistic pacing, so the GIF shows what a run actually looks
-// like without needing a live Copilot session. Elapsed times shown are
-// time-lapsed — a real run of this size takes a few minutes.
+// This is presentation-only: it prints log lines that closely mirror what the
+// task workflow emits (core/builtin-workflows.mjs + core/workflow-log.mjs +
+// core/monitor.mjs formats), so the GIF shows what a run looks like without
+// needing a live Copilot session. It is not byte-identical to a real run:
+// ANSI color is added for legibility, the full-output dump lines are omitted
+// for brevity, and elapsed times are time-lapsed — a real run of this size
+// takes a few minutes.
 //
 // Usage: node demo/replay.mjs        (DEMO_SPEED=3 for a 3x faster dry run)
 
@@ -128,10 +130,10 @@ await sleep(400);
 await log(`${cyan("phase=explore")} agents=4 (parallel)`, 400);
 await liveFanOut();
 await sleep(300);
-await log(`explore/performance status=${green("ok")} took=41007ms reply="PostgreSQL sustains ~38k mixed TPS with…"`, 220);
-await log(`explore/operations status=${green("ok")} took=46512ms reply="Managed PG/MySQL are operationally even…"`, 220);
-await log(`explore/cost status=${green("ok")} took=32988ms reply="SQLite wins only below ~10 tenants; at…"`, 220);
-await log(`explore/migration status=${green("ok")} took=47701ms reply="Schema-per-tenant → PG native partition…"`, 220);
+await log(`explore/performance status=${green("ok")} took=41007ms chars=15872 preview="PostgreSQL sustains ~38k mixed TPS…"`, 220);
+await log(`explore/operations status=${green("ok")} took=46512ms chars=20991 preview="Managed PG and MySQL are even; SQL…"`, 220);
+await log(`explore/cost status=${green("ok")} took=32988ms chars=13517 preview="SQLite wins only below ~10 tenants…"`, 220);
+await log(`explore/migration status=${green("ok")} took=47701ms chars=19866 preview="Schema-per-tenant maps to PG parti…"`, 220);
 await log(`phase=explore wall-clock=48210ms (parallel of 4)`, 500);
 
 // Synthesis
