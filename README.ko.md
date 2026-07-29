@@ -75,6 +75,12 @@ copilot --experimental
 /maestro task @docs/refactor-spec.md API 레이어부터 우선 진행
 ```
 
+**저장소 수정 스윕** — 쓰기 모드를 켜면 서브태스크마다 전용 git worktree 와
+브랜치를 받고, 머지 사이 선택적 검사 명령과 함께 순차 통합된다.
+```text
+/maestro task --write legacy restClient 호출 전부를 graphqlClient 로 마이그레이션
+```
+
 **반복 워크플로우** — 검증된 절차를 스크립트로 저장해 자체 명령으로 재실행,
 또는 외부 워크플로우를 GitHub 에서 직접 설치:
 ```text
@@ -106,6 +112,8 @@ copilot --experimental
   간 `dependsOn` 웨이브 지원.
 - **`@file` 참조** — `/maestro task @docs/spec.md …` 로 마크다운 스펙을 계획과
   모든 서브태스크 프롬프트에 인라인.
+- **쓰기 모드 (opt-in)** — `--write` 로 서브태스크마다 격리된 git worktree +
+  브랜치와 분리된 파일 스코프를 부여, 이후 순차 통합.
 - **격리된 실제 병렬 fan-out** — 서브태스크별 전용 child Copilot 세션과
   독립 컨텍스트 창; 전체 소요 시간 ≈ 최장 서브태스크.
 - **사전 승인 게이트** — 고비용 fan-out 실행 전 계획 검토 · 부분 선택 · 취소.

@@ -84,6 +84,13 @@ plan and every subtask.
 /maestro task @docs/refactor-spec.md focus on the API layer first
 ```
 
+**Repo-modifying sweeps** — opt into write mode and each subtask gets its own
+git worktree and branch, merged back sequentially with an optional check
+command between merges.
+```text
+/maestro task --write Migrate every call of legacy restClient to graphqlClient
+```
+
 **Repeatable workflows** — once a procedure works, save it as a script and rerun
 it as its own command, or install someone else's straight from GitHub:
 ```text
@@ -115,6 +122,8 @@ it as its own command, or install someone else's straight from GitHub:
   subtasks, with optional `dependsOn` waves between them.
 - **`@file` references** — `/maestro task @docs/spec.md …` inlines a markdown
   spec into the plan and every subtask prompt.
+- **Write mode (opt-in)** — `--write` gives each subtask an isolated git
+  worktree + branch with disjoint file scopes, then integrates sequentially.
 - **Real parallel fan-out with isolation** — every subtask gets its own child
   Copilot session and a fresh context window; wall-clock ≈ slowest subtask.
 - **Pre-approval gate** — review the plan, run a subset, or abort before any
