@@ -125,10 +125,17 @@ test("dryRunWorkflowCode surfaces a runtime blow-up", async () => {
 });
 
 test("dryRunWorkflowCode times out a module that stalls during evaluation", async () => {
-  // top-level await that never settles — the timeout envelope must cover
-  // module loading, not just run(api)
-  const stalled = "await new Promise(() => {});\nexport default async function run() {}";
-  await assert.rejects(() => dryRunWorkflowCode(stalled, { timeoutMs: 150 }), /exceeded 150ms/);
+  // module evaluation that stalls (a long-lived timer keeps the loop alive) —
+  // the timeout envelope must cover module loading, not just run(api)
+  const stalled = "await new Promise((r) => setTimeout(r, 1e9));\nexport default async function run() {}";
+  await assert.rejects(() => dryRunWorkflowCode(stalled, { timeoutMs: 500 }), /exceeded 500ms/);
+});
+
+test("dryRunWorkflowCode hard-kills a synchronous hang", async () => {
+  // while(true) can't be interrupted in-process — the child-process isolation
+  // makes the timeout hard (SIGKILL) instead of hanging the host session
+  const busy = "export default async function run() { while (true) {} }";
+  await assert.rejects(() => dryRunWorkflowCode(busy, { timeoutMs: 500 }), /exceeded 500ms/);
 });
 
 // ── composeWorkflowCommand (end-to-end with fakes) ──────────────────────────
@@ -212,6 +219,21 @@ test("compose on a non-interactive host writes a draft, never a runnable file", 
     assert.equal(draft, GOOD_WORKFLOW);
     assert.equal(dryRuns, 0, "no code may execute without a human in the loop");
     assert.ok(session.logs.some((l) => /draft written/.test(l)));
+  });
+});
+
+test("compose never clobbers an existing draft without --force", async () => {
+  await withTempDir(async (dir) => {
+    const manualEdits = "// my manual edits\nexport default async function run() {}";
+    await writeFile(join(dir, "my-flow.mjs.draft"), manualEdits, "utf8");
+    const session = fakeSession({ interactive: false });
+    await composeWorkflowCommand(session, "do things --name my-flow", {
+      adapter: plannerAdapter(GOOD_WORKFLOW),
+      destDir: dir,
+    });
+    // the hand-edited draft survives; the new draft lands beside it
+    assert.equal(await readFile(join(dir, "my-flow.mjs.draft"), "utf8"), manualEdits);
+    assert.equal(await readFile(join(dir, "my-flow-2.mjs.draft"), "utf8"), GOOD_WORKFLOW);
   });
 });
 

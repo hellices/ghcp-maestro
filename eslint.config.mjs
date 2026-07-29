@@ -59,6 +59,15 @@ export default [
     },
   },
   {
+    // The compose dry-run child is a standalone process whose stderr is a
+    // pipe read by the parent — it is NOT connected to the JSON-RPC stdio,
+    // so writing to stderr there is the intended reporting channel.
+    files: ["core/compose-dry-run-child.mjs"],
+    rules: {
+      "no-restricted-syntax": "off",
+    },
+  },
+  {
     // Example saved workflows run inside the runtime sandbox and use injected
     // globals; they legitimately reference identifiers the linter can't see.
     files: ["extensions/ghcp-maestro/saved-workflows/**/*.mjs"],

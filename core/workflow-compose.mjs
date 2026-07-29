@@ -14,17 +14,16 @@
 // without a human in the loop.
 
 import { mkdtemp, rm, mkdir, writeFile, access } from "node:fs/promises";
+import { spawn as spawnProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { spawn } from "./spawn.mjs";
-import {
-  validateWorkflowName,
-  defaultWorkflowDirs,
-  buildWorkflowApi,
-} from "./saved-workflows.mjs";
+import { validateWorkflowName, defaultWorkflowDirs } from "./saved-workflows.mjs";
 import { validateWorkflowCode } from "./workflow-install.mjs";
+
+const DRY_RUN_CHILD = fileURLToPath(new URL("./compose-dry-run-child.mjs", import.meta.url));
 
 /** Timeout for the single dry-run execution (echo adapter, no tokens). */
 const DRY_RUN_TIMEOUT_MS = 30_000;
@@ -238,6 +237,11 @@ export function scanForbiddenGlobals(code) {
  * failure path) is caught before it is saved. Only called after the user has
  * reviewed and approved the code.
  *
+ * The candidate runs in a disposable child `node` process
+ * (compose-dry-run-child.mjs) so the timeout is HARD: a synchronous hang
+ * (`while (true) {}`) or a timer leaked during module evaluation is killed
+ * with the process instead of stalling the host session.
+ *
  * @param {string} code
  * @param {{ log?: Function, timeoutMs?: number }} [opts]
  */
@@ -247,50 +251,65 @@ export async function dryRunWorkflowCode(code, opts = {}) {
   const file = join(dir, "candidate.mjs");
   try {
     await writeFile(file, code, "utf8");
-    const controller = new AbortController();
-    let timer;
-    const deadline = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort(new Error(`dry run exceeded ${timeoutMs}ms`));
-        reject(new Error(`dry run exceeded ${timeoutMs}ms`));
-      }, timeoutMs);
-    });
-    try {
-      // The timeout envelope covers module evaluation too — a top-level await
-      // that never settles must not hang the compose flow.
-      const mod = await Promise.race([import(pathToFileURL(file).href), deadline]);
-      const run = typeof mod.default === "function" ? mod.default : mod.run;
-      if (typeof run !== "function") {
-        throw new Error("module does not default-export a function");
-      }
-      const echoAdapter = {
-        name: "compose-dry-run-echo",
-        async invoke(spec) {
-          return { text: `echo:${spec.agent ?? spec.id ?? "agent"}` };
-        },
-      };
-      // A stub run handle so runPhase/monitor plumbing works without touching
-      // the real run store; progress written during a dry run goes nowhere.
-      const stubRun = {
-        runId: "compose-dry-run",
-        readAgent: async () => undefined,
-        writeAgent: async () => {},
-        writeProgress: async () => {},
-      };
-      const api = buildWorkflowApi({
-        session: { log: opts.log ?? (() => {}) },
-        adapter: echoAdapter,
-        run: stubRun,
-        args: { input: "dry-run" },
-        signal: controller.signal,
-        namespace: "compose-dry-run",
+    await new Promise((resolve, reject) => {
+      const child = spawnProcess(process.execPath, [DRY_RUN_CHILD, file], {
+        stdio: ["ignore", "ignore", "pipe"],
       });
-      await Promise.race([run(api), deadline]);
-    } finally {
-      clearTimeout(timer);
-    }
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs);
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on("close", (exitCode) => {
+        clearTimeout(timer);
+        if (timedOut) reject(new Error(`dry run exceeded ${timeoutMs}ms`));
+        else if (exitCode === 0) resolve();
+        else reject(new Error(stderr.trim() || `dry run exited with code ${exitCode}`));
+      });
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Write the generated code to a `.draft` file without clobbering existing
+ * drafts: unless `force` is set, an occupied `<name>.mjs.draft` makes the
+ * draft land at the next free `<name>-N.mjs.draft`, so manual edits to a
+ * previous draft survive a re-run of compose.
+ *
+ * @param {string} destDir
+ * @param {string} name
+ * @param {string} code
+ * @param {{ force?: boolean }} [opts]
+ * @returns {Promise<string>} the path actually written
+ */
+async function writeDraft(destDir, name, code, opts = {}) {
+  await mkdir(destDir, { recursive: true });
+  let draftFile = join(destDir, `${name}.mjs.draft`);
+  if (!opts.force) {
+    for (let n = 2; await fileExists(draftFile); n++) {
+      draftFile = join(destDir, `${name}-${n}.mjs.draft`);
+    }
+  }
+  await writeFile(draftFile, code, "utf8");
+  return draftFile;
+}
+
+async function fileExists(file) {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -331,7 +350,7 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
   // described it; the user dir stays for installs.
   const destDir = opts.destDir ?? defaultWorkflowDirs({ env })[0];
   const destFile = join(destDir, `${name}.mjs`);
-  if (!force && (await access(destFile).then(() => true, () => false))) {
+  if (!force && (await fileExists(destFile))) {
     await warn(`'${name}' already exists at ${destFile}. Re-run with --force to overwrite, or pick another --name.`);
     return;
   }
@@ -385,9 +404,7 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
   // or executed without a human decision.
   const interactive = session.capabilities?.ui?.elicitation === true && session.ui?.elicitation;
   if (!interactive) {
-    const draftFile = join(destDir, `${name}.mjs.draft`);
-    await mkdir(destDir, { recursive: true });
-    await writeFile(draftFile, code, "utf8");
+    const draftFile = await writeDraft(destDir, name, code, { force });
     await session.log(
       `ghcp-maestro: compose: non-interactive host — draft written to ${draftFile}. Review it, then rename to ${name}.mjs to enable /maestro run ${name}.`,
     );
@@ -417,9 +434,7 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
   try {
     await dryRun(code, { log: () => {} });
   } catch (err) {
-    const draftFile = join(destDir, `${name}.mjs.draft`);
-    await mkdir(destDir, { recursive: true });
-    await writeFile(draftFile, code, "utf8");
+    const draftFile = await writeDraft(destDir, name, code, { force });
     await warn(
       `dry run failed: ${err?.message ?? err} — draft kept at ${draftFile}. Fix it manually, then rename to ${name}.mjs.`,
     );
