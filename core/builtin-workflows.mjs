@@ -326,7 +326,9 @@ export function createBuiltinWorkflows(deps) {
     // @file references (#39): resolve before the run exists so a bad path
     // costs nothing. The manifest keeps the RAW line — resume replays the
     // same resolution (and correctly fails if the spec file disappeared).
-    const inputs = await resolveTaskInputs(session, flags.task, opts);
+    // Flag stripping only applies in write mode — a read-only task keeps its
+    // text verbatim (e.g. a question ABOUT "--allow-dirty").
+    const inputs = await resolveTaskInputs(session, writeMode ? flags.task : rawTask, opts);
     if (!inputs) return null;
     const { task, refsBlock } = inputs;
     const run = opts.run ?? (await createRun({ workflow: "task", args: { task: rawTask } }));
@@ -694,10 +696,20 @@ export function createBuiltinWorkflows(deps) {
         },
       });
       if (integration.failed) {
+        // A check failure leaves the merge applied on the target branch (so
+        // the failing state is inspectable); a conflict is aborted, leaving
+        // the branch fully unmerged. Word the report accordingly.
+        const failedNote = integration.failed.applied
+          ? `The failing merge of ${integration.failed.branch} is still applied on ${targetBranch} — inspect or revert it.`
+          : `${integration.failed.branch} was not merged (conflict aborted) — resolve manually.`;
+        const remainingNote =
+          integration.remaining.length > 0
+            ? ` Remaining unmerged: ${integration.remaining.join(", ")}.`
+            : "";
         return failRun(
           session,
           run,
-          `ghcp-maestro/${runId}: write mode: integration stopped at "${integration.failed.agent}" — ${integration.failed.reason}. Merged: ${integration.merged.length > 0 ? integration.merged.join(", ") : "(none)"}. Left for manual resolution: ${[integration.failed.branch, ...integration.remaining].join(", ")} (worktrees kept under ${join(run.runDir, "worktrees")})`,
+          `ghcp-maestro/${runId}: write mode: integration stopped at "${integration.failed.agent}" — ${integration.failed.reason}. Merged: ${integration.merged.length > 0 ? integration.merged.join(", ") : "(none)"}. ${failedNote}${remainingNote} (worktrees kept under ${join(run.runDir, "worktrees")})`,
           tokensPatch(),
         );
       }

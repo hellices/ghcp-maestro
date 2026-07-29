@@ -266,7 +266,7 @@ export function makeCheckRunner(cmd, cwd) {
  *
  * @param {{ agent: string, branch: string }[]} branches
  * @param {{ exec?: typeof execGit, cwd?: string, targetBranch: string, runCheck?: () => Promise<void>, log?: (msg: string, opts?: object) => unknown }} opts
- * @returns {Promise<{ merged: string[], failed: { agent: string, branch: string, reason: string } | null, remaining: string[] }>}
+ * @returns {Promise<{ merged: string[], failed: { agent: string, branch: string, reason: string, applied: boolean } | null, remaining: string[] }>}
  */
 export async function integrateBranches(branches, opts) {
   const exec = opts.exec ?? execGit;
@@ -304,7 +304,7 @@ export async function integrateBranches(branches, opts) {
       }
       return {
         merged,
-        failed: { agent, branch, reason: `merge conflict: ${err?.message ?? err}` },
+        failed: { agent, branch, reason: `merge conflict: ${err?.message ?? err}`, applied: false },
         remaining: branches.slice(i + 1).map((b) => b.branch),
       };
     }
@@ -312,9 +312,17 @@ export async function integrateBranches(branches, opts) {
       try {
         await opts.runCheck();
       } catch (err) {
+        // The merge itself succeeded — it stays applied so the user can
+        // inspect (or revert) the exact failing state. `applied: true` lets
+        // callers word their report accordingly.
         return {
           merged,
-          failed: { agent, branch, reason: `check failed after merge: ${err?.message ?? err}` },
+          failed: {
+            agent,
+            branch,
+            reason: `check failed after merge: ${err?.message ?? err}`,
+            applied: true,
+          },
           remaining: branches.slice(i + 1).map((b) => b.branch),
         };
       }

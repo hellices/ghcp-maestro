@@ -992,8 +992,9 @@ test("task --write stops integration on merge conflict with an actionable report
     assert.deepEqual(run.manifest.write.remaining, [`maestro/${run.runId}/docs`]);
     // The conflicted merge was aborted so the tree is usable.
     assert.ok(gitExec.calls.some((c) => c.args.join(" ") === "merge --abort"));
-    // Actionable report names the branches left for manual resolution.
-    assert.ok(session.logs.some((l) => /Left for manual resolution/.test(l)));
+    // Actionable report: conflict was aborted (branch unmerged), remainder listed.
+    assert.ok(session.logs.some((l) => /was not merged \(conflict aborted\)/.test(l)));
+    assert.ok(session.logs.some((l) => /Remaining unmerged: maestro\/.*\/docs/.test(l)));
   });
 });
 
@@ -1009,6 +1010,22 @@ test("task without --write never touches git (#40)", async () => {
     assert.equal(run.manifest.status, "complete");
     assert.equal(gitExec.calls.length, 0);
     assert.ok(!prompts.plan.includes("WRITE MODE"));
+  });
+});
+
+test("task without --write keeps write-flag lookalikes in the task text (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(prompts),
+    });
+    const run = await runTaskWorkflow(session, "explain what --allow-dirty does", {
+      gitExec: fakeGitExec(),
+    });
+    assert.equal(run.manifest.status, "complete");
+    // Read-only runs must not strip flag-shaped tokens from the user's text.
+    assert.ok(prompts.plan.includes("--allow-dirty"));
   });
 });
 
