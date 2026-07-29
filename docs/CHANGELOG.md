@@ -7,6 +7,16 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **Opt-in write mode — worktree-per-agent isolation (`--write`).** New
+  `core/write-mode.mjs`: `/maestro task --write …` requires the plan to
+  declare disjoint per-subtask file scopes (overlaps rejected, planner
+  retries), gives each agent its own `git worktree` on a fresh
+  `maestro/<runId>/<agent>` branch with a prompt pinned to it, then merges
+  branches back sequentially — running `GHCP_MAESTRO_CHECK_CMD` after each
+  merge when set — and stops with an actionable report on the first conflict
+  or check failure. Requires a clean work tree (`--allow-dirty` to override)
+  on a checked-out branch, verified before any token is spent; worktrees with
+  uncommitted work are never removed. Read-only remains the default. (#40)
 - **`@file` references in `/maestro task` and `/maestro brainstorm`.** New
   `core/task-inputs.mjs`: `@<path>` tokens in the task line are resolved
   against the cwd **before the run exists** (a bad path costs zero tokens),

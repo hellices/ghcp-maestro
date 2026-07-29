@@ -865,3 +865,149 @@ test("brainstorm workflow inlines @file refs into lens prompts (#39)", async () 
     }
   });
 });
+
+// --- write mode (#40) --------------------------------------------------------
+
+/** Fake git that records calls and simulates a clean repo on branch main. */
+function fakeGitExec(overrides = {}) {
+  const calls = [];
+  const exec = async (args, execOpts) => {
+    calls.push({ args, cwd: execOpts?.cwd });
+    const key = args.join(" ");
+    if (overrides.onCall) {
+      const out = await overrides.onCall(args, key);
+      if (out !== undefined) return out;
+    }
+    if (key.startsWith("rev-parse --is-inside-work-tree")) return { stdout: "true\n", stderr: "" };
+    if (key.startsWith("status --porcelain")) return { stdout: overrides.dirty ? " M x\n" : "", stderr: "" };
+    if (key.startsWith("rev-parse --abbrev-ref HEAD")) return { stdout: "main\n", stderr: "" };
+    return { stdout: "", stderr: "" };
+  };
+  exec.calls = calls;
+  return exec;
+}
+
+function writePlanAdapter(prompts = {}) {
+  return {
+    name: "write-capture",
+    async invoke(spec) {
+      prompts[spec.id] = spec.prompt;
+      if (spec.agent === "plan") {
+        return {
+          text: JSON.stringify([
+            { agent: "api", prompt: "migrate api", files: ["src/api"] },
+            { agent: "ui", prompt: "migrate ui", files: ["src/ui"] },
+            { agent: "docs", prompt: "update docs", files: ["docs"] },
+          ]),
+        };
+      }
+      return { text: `done-${spec.agent}` };
+    },
+  };
+}
+
+test("task --write runs end-to-end: worktrees, pinned prompts, sequential integration (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const gitExec = fakeGitExec();
+    const checks = [];
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(prompts),
+    });
+    const run = await runTaskWorkflow(session, "--write migrate the client", {
+      gitExec,
+      runCheck: async () => checks.push(Date.now()),
+    });
+    assert.equal(run.manifest.status, "complete");
+    // The raw line (with the flag) is what resume replays.
+    assert.equal(run.manifest.args.task, "--write migrate the client");
+    // Plan prompt demanded disjoint file scopes.
+    assert.match(prompts.plan, /"files": \[/);
+    // Every explore prompt is pinned to its own worktree + branch + scope.
+    for (const agent of ["api", "ui", "docs"]) {
+      const p = Object.entries(prompts).find(([k]) => k.includes(`-${agent}`))?.[1];
+      assert.match(p, /WRITE MODE/);
+      assert.match(p, new RegExp(`maestro/${run.runId}/${agent}`));
+    }
+    // Worktrees created per agent, then merges strictly sequential with a
+    // check after each, then clean worktrees removed.
+    const gitKeys = gitExec.calls.map((c) => c.args.join(" "));
+    assert.equal(gitKeys.filter((k) => k.startsWith("worktree add")).length, 3);
+    const merges = gitKeys.filter((k) => k.startsWith("merge --no-ff"));
+    assert.equal(merges.length, 3);
+    assert.equal(checks.length, 3);
+    assert.equal(gitKeys.filter((k) => k.startsWith("worktree remove")).length, 3);
+    // Manifest records the integration outcome.
+    assert.equal(run.manifest.write.targetBranch, "main");
+    assert.equal(run.manifest.write.merged.length, 3);
+    assert.equal(run.manifest.write.failed, null);
+  });
+});
+
+test("task --write refuses a dirty repo without --allow-dirty (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let invoked = 0;
+    const adapter = {
+      name: "never",
+      async invoke() {
+        invoked += 1;
+        return { text: "x" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "--write migrate", {
+      gitExec: fakeGitExec({ dirty: true }),
+    });
+    assert.equal(run, null);
+    assert.equal(invoked, 0);
+    assert.ok(session.logs.some((l) => /clean work tree/.test(l)));
+    // --allow-dirty lifts the guard.
+    const run2 = await runTaskWorkflow(session, "--write --allow-dirty migrate", {
+      gitExec: fakeGitExec({ dirty: true }),
+    });
+    assert.equal(run2.manifest.status, "error"); // plan lacks files → both attempts rejected
+  });
+});
+
+test("task --write stops integration on merge conflict with an actionable report (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const gitExec = fakeGitExec({
+      onCall: async (args, key) => {
+        if (key.startsWith("merge --no-ff") && key.includes("/ui")) {
+          throw new Error("CONFLICT in src/shared.mjs");
+        }
+        return undefined;
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(),
+    });
+    const run = await runTaskWorkflow(session, "--write migrate the client", { gitExec });
+    assert.equal(run.manifest.status, "error");
+    assert.equal(run.manifest.write.merged.length, 1); // api merged before the conflict
+    assert.equal(run.manifest.write.failed.agent, "ui");
+    assert.deepEqual(run.manifest.write.remaining, [`maestro/${run.runId}/docs`]);
+    // The conflicted merge was aborted so the tree is usable.
+    assert.ok(gitExec.calls.some((c) => c.args.join(" ") === "merge --abort"));
+    // Actionable report names the branches left for manual resolution.
+    assert.ok(session.logs.some((l) => /Left for manual resolution/.test(l)));
+  });
+});
+
+test("task without --write never touches git (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const gitExec = fakeGitExec();
+    const prompts = {};
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(prompts),
+    });
+    const run = await runTaskWorkflow(session, "migrate the client", { gitExec });
+    assert.equal(run.manifest.status, "complete");
+    assert.equal(gitExec.calls.length, 0);
+    assert.ok(!prompts.plan.includes("WRITE MODE"));
+  });
+});
