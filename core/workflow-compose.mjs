@@ -95,7 +95,7 @@ export function buildComposePrompt({ description, name }) {
   return [
     "You write a saved workflow script for ghcp-maestro (a GitHub Copilot CLI multi-agent runtime).",
     "",
-    "A saved workflow is ONE ESM module that default-exports an async function receiving a single `api` object. The script may use ONLY the injected `api` — no imports of any kind, no Node builtins, no `process`/`globalThis`/`global`/`fetch`/`eval`/`Function`, no filesystem or shell access. Violations are rejected by a static scan before the script is ever run.",
+    "A saved workflow is ONE ESM module that default-exports an async function receiving a single `api` object. The script may use ONLY the injected `api` — no imports of any kind, no Node builtins, no `process`/`globalThis`/`global`/`fetch`/`eval`/`Function`, no `console` (stdout corrupts the host's JSON-RPC channel — log via `api.log` only), no filesystem or shell access. Violations are rejected by a static scan before the script is ever run.",
     "",
     "The `api` object:",
     "- `api.args` — object; invocation args (`/maestro run <name> {\"key\":...}` or `{ input: \"<text>\" }`)",
@@ -235,6 +235,7 @@ const FORBIDDEN = [
   [/\bfetch\b/, "fetch — network access is not available to workflows"],
   [/\bWebSocket\b/, "WebSocket — network access is not available to workflows"],
   [/\bchild_process\b/, "child_process — shell access is not available to workflows"],
+  [/\bconsole\b/, "console — stdout corrupts the host JSON-RPC channel; use api.log"],
 ];
 
 /**
