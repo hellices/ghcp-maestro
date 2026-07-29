@@ -277,6 +277,19 @@ test("fixLoop rejects a negative or fractional stallRounds (#18)", async () => {
   }
 });
 
+test("fixLoop stall detection skips rounds whose check omits a report (#18)", async () => {
+  const res = await fixLoop({
+    maxIters: 4,
+    stallRounds: 2,
+    // No report at all — nothing observable to compare, so the loop must
+    // never stop as "stalled"; it runs to the iteration cap instead.
+    check: async () => ({ ok: false }),
+    applyFix: () => {},
+  });
+  assert.equal(res.stopReason, "max-iters");
+  assert.equal(res.iterations, 4);
+});
+
 test("fixLoop returns the last observed evidence even when the final round emits none (#18)", async () => {
   const res = await fixLoop({
     maxIters: 3,

@@ -280,19 +280,25 @@ export async function fixLoop(opts) {
     }
     // Stall detection: a failing round whose report is byte-identical to the
     // previous one made no observable progress. Reset on any change so slow
-    // but real progress never trips it.
+    // but real progress never trips it. Rounds without a report are skipped —
+    // there is nothing observable to compare, so they never advance the counter.
     if (stallRounds > 0) {
-      const report = result.report ?? "";
-      stallCount = report === lastReport ? stallCount + 1 : 0;
-      lastReport = report;
-      if (stallCount >= stallRounds) {
-        return {
-          ok: false,
-          iterations: i + 1,
-          history,
-          stopReason: "stalled",
-          ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
-        };
+      const report = result.report;
+      if (report == null) {
+        stallCount = 0;
+        lastReport = undefined;
+      } else {
+        stallCount = report === lastReport ? stallCount + 1 : 0;
+        lastReport = report;
+        if (stallCount >= stallRounds) {
+          return {
+            ok: false,
+            iterations: i + 1,
+            history,
+            stopReason: "stalled",
+            ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
+          };
+        }
       }
     }
     // Not converged yet — attempt a fix unless this was the final allowed iteration.
