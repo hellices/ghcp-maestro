@@ -68,17 +68,18 @@ export function validateWorkflowName(name) {
  *   2. user      — <dataDir>/workflows  (defaults to ~/.copilot/plugin-data/...)
  *   3. bundled   — <extensionDir>/saved-workflows  (examples shipped with the plugin)
  *
- * @param {{ cwd?: string, extensionDir?: string, dataDir?: string }} [ctx]
+ * @param {{ cwd?: string, extensionDir?: string, dataDir?: string, env?: Record<string, string|undefined> }} [ctx]
  * @returns {string[]}
  */
 export function defaultWorkflowDirs(ctx = {}) {
-  const cwd = ctx.cwd ?? process.env.COPILOT_CLI_CWD ?? process.cwd();
+  const env = ctx.env ?? process.env;
+  const cwd = ctx.cwd ?? env.COPILOT_CLI_CWD ?? process.cwd();
   const dataDir =
     ctx.dataDir ??
-    process.env.GHCP_MAESTRO_DATA_DIR ??
+    env.GHCP_MAESTRO_DATA_DIR ??
     join(homedir(), ".copilot", "plugin-data", "ghcp-maestro");
   const dirs = [
-    process.env.GHCP_MAESTRO_WORKFLOWS_DIR || join(cwd, ".ghcp-maestro", "workflows"),
+    env.GHCP_MAESTRO_WORKFLOWS_DIR || join(cwd, ".ghcp-maestro", "workflows"),
     join(dataDir, "workflows"),
   ];
   if (ctx.extensionDir) dirs.push(join(ctx.extensionDir, "saved-workflows"));

@@ -87,6 +87,9 @@ test("scanForbiddenGlobals flags escapes but not prompt text", () => {
   assert.ok(scanForbiddenGlobals("const e = eval; e('1')").length > 0);
   // hidden inside a template interpolation must still be caught
   assert.ok(scanForbiddenGlobals("const p = `${process.env.SECRET}`;").length > 0);
+  // `global` is forbidden too — otherwise global['process'] (the string is
+  // stripped by the literal walker) would be a trivial bypass
+  assert.ok(scanForbiddenGlobals("const p = global['pro' + 'cess'];").length > 0);
 });
 
 // ── buildComposePrompt ──────────────────────────────────────────────────────
@@ -119,6 +122,13 @@ test("dryRunWorkflowCode executes a good module against the echo adapter", async
 test("dryRunWorkflowCode surfaces a runtime blow-up", async () => {
   const bad = "export default async function run(api) { await api.noSuchMethod(); }";
   await assert.rejects(() => dryRunWorkflowCode(bad), /noSuchMethod/);
+});
+
+test("dryRunWorkflowCode times out a module that stalls during evaluation", async () => {
+  // top-level await that never settles — the timeout envelope must cover
+  // module loading, not just run(api)
+  const stalled = "await new Promise(() => {});\nexport default async function run() {}";
+  await assert.rejects(() => dryRunWorkflowCode(stalled, { timeoutMs: 150 }), /exceeded 150ms/);
 });
 
 // ── composeWorkflowCommand (end-to-end with fakes) ──────────────────────────

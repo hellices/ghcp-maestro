@@ -90,7 +90,7 @@ export function buildComposePrompt({ description, name }) {
   return [
     "You write a saved workflow script for ghcp-maestro (a GitHub Copilot CLI multi-agent runtime).",
     "",
-    "A saved workflow is ONE ESM module that default-exports an async function receiving a single `api` object. The script may use ONLY the injected `api` — no imports of any kind, no Node builtins, no `process`/`globalThis`/`fetch`/`eval`/`Function`, no filesystem or shell access. Violations are rejected by a static scan before the script is ever run.",
+    "A saved workflow is ONE ESM module that default-exports an async function receiving a single `api` object. The script may use ONLY the injected `api` — no imports of any kind, no Node builtins, no `process`/`globalThis`/`global`/`fetch`/`eval`/`Function`, no filesystem or shell access. Violations are rejected by a static scan before the script is ever run.",
     "",
     "The `api` object:",
     "- `api.args` — object; invocation args (`/maestro run <name> {\"key\":...}` or `{ input: \"<text>\" }`)",
@@ -205,6 +205,7 @@ const FORBIDDEN = [
   [/\brequire\b/, "require — use only the injected api"],
   [/\bprocess\b/, "process — environment access is not available to workflows"],
   [/\bglobalThis\b/, "globalThis — global access is not available to workflows"],
+  [/\bglobal\b/, "global — global access is not available to workflows"],
   [/\beval\b/, "eval — dynamic code execution is not allowed"],
   [/\bFunction\b/, "Function constructor — dynamic code execution is not allowed"],
   [/\bfetch\b/, "fetch — network access is not available to workflows"],
@@ -246,45 +247,45 @@ export async function dryRunWorkflowCode(code, opts = {}) {
   const file = join(dir, "candidate.mjs");
   try {
     await writeFile(file, code, "utf8");
-    const mod = await import(pathToFileURL(file).href);
-    const run = typeof mod.default === "function" ? mod.default : mod.run;
-    if (typeof run !== "function") {
-      throw new Error("module does not default-export a function");
-    }
-    const echoAdapter = {
-      name: "compose-dry-run-echo",
-      async invoke(spec) {
-        return { text: `echo:${spec.agent ?? spec.id ?? "agent"}` };
-      },
-    };
-    // A stub run handle so runPhase/monitor plumbing works without touching
-    // the real run store; progress written during a dry run goes nowhere.
-    const stubRun = {
-      runId: "compose-dry-run",
-      readAgent: async () => undefined,
-      writeAgent: async () => {},
-      writeProgress: async () => {},
-    };
     const controller = new AbortController();
-    const api = buildWorkflowApi({
-      session: { log: opts.log ?? (() => {}) },
-      adapter: echoAdapter,
-      run: stubRun,
-      args: { input: "dry-run" },
-      signal: controller.signal,
-      namespace: "compose-dry-run",
-    });
     let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort(new Error(`dry run exceeded ${timeoutMs}ms`));
+        reject(new Error(`dry run exceeded ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
     try {
-      await Promise.race([
-        run(api),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => {
-            controller.abort(new Error(`dry run exceeded ${timeoutMs}ms`));
-            reject(new Error(`dry run exceeded ${timeoutMs}ms`));
-          }, timeoutMs);
-        }),
-      ]);
+      // The timeout envelope covers module evaluation too — a top-level await
+      // that never settles must not hang the compose flow.
+      const mod = await Promise.race([import(pathToFileURL(file).href), deadline]);
+      const run = typeof mod.default === "function" ? mod.default : mod.run;
+      if (typeof run !== "function") {
+        throw new Error("module does not default-export a function");
+      }
+      const echoAdapter = {
+        name: "compose-dry-run-echo",
+        async invoke(spec) {
+          return { text: `echo:${spec.agent ?? spec.id ?? "agent"}` };
+        },
+      };
+      // A stub run handle so runPhase/monitor plumbing works without touching
+      // the real run store; progress written during a dry run goes nowhere.
+      const stubRun = {
+        runId: "compose-dry-run",
+        readAgent: async () => undefined,
+        writeAgent: async () => {},
+        writeProgress: async () => {},
+      };
+      const api = buildWorkflowApi({
+        session: { log: opts.log ?? (() => {}) },
+        adapter: echoAdapter,
+        run: stubRun,
+        args: { input: "dry-run" },
+        signal: controller.signal,
+        namespace: "compose-dry-run",
+      });
+      await Promise.race([run(api), deadline]);
     } finally {
       clearTimeout(timer);
     }
