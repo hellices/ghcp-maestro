@@ -171,11 +171,13 @@ export async function createWorktrees(specs, opts) {
   for (const spec of specs) {
     const branch = `maestro/${opts.runId}/${spec.agent}`;
     const dir = join(opts.root, spec.agent);
+    let fresh = true;
     try {
       await exec(["worktree", "add", dir, "-b", branch], { cwd: opts.cwd });
     } catch (err) {
       // Resume path: the branch survives from the previous attempt — reattach.
       if (/already exists/i.test(err?.message ?? "")) {
+        fresh = false;
         try {
           await exec(["worktree", "add", dir, branch], { cwd: opts.cwd });
         } catch (err2) {
@@ -189,17 +191,21 @@ export async function createWorktrees(specs, opts) {
         throw err;
       }
     }
-    created.push({ agent: spec.agent, dir, branch });
+    created.push({ agent: spec.agent, dir, branch, fresh });
   }
-  return created;
+  return created.map(({ agent, dir, branch }) => ({ agent, dir, branch }));
 }
 
-/** Best-effort removal of just-created (still pristine) worktrees + branches. */
+/**
+ * Best-effort removal of just-created worktrees. A branch is deleted only
+ * when this run created it (`fresh`) — resume branches carry prior run state
+ * and must always survive.
+ */
 async function rollbackWorktrees(exec, created, cwd) {
   for (const wt of created) {
     try {
       await exec(["worktree", "remove", wt.dir], { cwd });
-      await exec(["branch", "-D", wt.branch], { cwd });
+      if (wt.fresh) await exec(["branch", "-D", wt.branch], { cwd });
     } catch {
       // Rollback is best-effort — the original error is what matters.
     }
@@ -265,6 +271,16 @@ export function makeCheckRunner(cmd, cwd) {
 export async function integrateBranches(branches, opts) {
   const exec = opts.exec ?? execGit;
   const cwd = opts.cwd;
+  // Guard against the user having switched branches while agents ran — the
+  // merges must land on the branch recorded at run start, not wherever HEAD
+  // happens to be now.
+  const { stdout } = await exec(["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+  const head = stdout.trim();
+  if (head !== opts.targetBranch) {
+    throw new Error(
+      `integration expected branch "${opts.targetBranch}" but HEAD is on "${head}" — check out ${opts.targetBranch} and resume`,
+    );
+  }
   const merged = [];
   for (let i = 0; i < branches.length; i += 1) {
     const { agent, branch } = branches[i];
