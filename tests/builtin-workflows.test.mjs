@@ -1161,3 +1161,77 @@ test("task --write rejects agent ids that collide only by case (#40)", async () 
     assert.ok(session.logs.some((l) => /collide after sanitization/.test(l)));
   });
 });
+
+test("task --write resume skips branches the previous attempt already merged (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    // First attempt: api merges, then the ui merge conflicts → run fails with
+    // manifest.write.merged = [api].
+    const gitExec1 = fakeGitExec({
+      onCall: async (args, key) => {
+        if (key.startsWith("merge --no-ff") && key.includes("/ui")) {
+          throw new Error("CONFLICT in src/shared.mjs");
+        }
+        return undefined;
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(),
+    });
+    const run = await runTaskWorkflow(session, "--write migrate the client", {
+      gitExec: gitExec1,
+    });
+    assert.equal(run.manifest.status, "error");
+    const apiBranch = `maestro/${run.runId}/api`;
+    assert.deepEqual(run.manifest.write.merged, [apiBranch]);
+
+    // Resume: the conflict is gone. The already-merged api branch must NOT be
+    // re-merged (a re-merge would also re-run the check command).
+    const gitExec2 = fakeGitExec();
+    const resumed = await runTaskWorkflow(session, run.manifest.args.task, {
+      run,
+      gitExec: gitExec2,
+    });
+    assert.equal(resumed.manifest.status, "complete");
+    const resumeMerges = gitExec2.calls
+      .map((c) => c.args.join(" "))
+      .filter((k) => k.startsWith("merge --no-ff"));
+    assert.equal(resumeMerges.length, 2);
+    assert.ok(!resumeMerges.some((k) => k.includes("/api")));
+    // The manifest stays cumulative across attempts.
+    assert.deepEqual(resumed.manifest.write.merged, [
+      apiBranch,
+      `maestro/${run.runId}/ui`,
+      `maestro/${run.runId}/docs`,
+    ]);
+  });
+});
+
+test("task --write uses normalized scopes in child prompts, not raw plan strings (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const adapter = {
+      name: "messy-scopes",
+      async invoke(spec) {
+        prompts[spec.id] = spec.prompt;
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "api", prompt: "migrate api", files: ["src//api/./v2/"] },
+              { agent: "ui", prompt: "migrate ui", files: ["src/ui"] },
+              { agent: "docs", prompt: "update docs", files: ["docs"] },
+            ]),
+          };
+        }
+        return { text: `done-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "--write migrate", { gitExec: fakeGitExec() });
+    assert.equal(run.manifest.status, "complete");
+    const apiPrompt = Object.entries(prompts).find(([k]) => k.includes("-api"))?.[1];
+    assert.match(apiPrompt, /Modify ONLY files under: src\/api\/v2\b/);
+    assert.ok(!apiPrompt.includes("src//api"));
+  });
+});

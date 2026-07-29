@@ -420,7 +420,13 @@ export function createBuiltinWorkflows(deps) {
     const validatePlanText = (text) => {
       const parsed = parseAndValidatePlan(text, { requireFiles: writeMode });
       if (writeMode) {
-        validateDisjointScopes(parsed);
+        // validateDisjointScopes returns the NORMALIZED scopes — use those
+        // everywhere downstream (worktree prompts) so raw model output can't
+        // smuggle control characters or path variants past validation.
+        const normalizedScopes = validateDisjointScopes(parsed);
+        for (let i = 0; i < parsed.length; i += 1) {
+          parsed[i] = { ...parsed[i], files: normalizedScopes[i].files };
+        }
         const sanitized = new Map();
         for (const s of parsed) {
           // Lowercased key: worktree dirs land on case-insensitive
@@ -684,17 +690,22 @@ export function createBuiltinWorkflows(deps) {
     // integration with the remaining branches left for manual resolution.
     if (writeMode) {
       // Merge in topological order — dependencies land on the target branch
-      // before their dependents, mirroring the explore layers.
+      // before their dependents, mirroring the explore layers. On resume,
+      // branches the previous attempt already merged (recorded in the
+      // manifest) are skipped — re-merging is a no-op but would re-run the
+      // check command, which may be slow or carry side effects.
+      const alreadyMerged = new Set(run.manifest?.write?.merged ?? []);
       const okBranches = layers
         .flat()
         .map((s) => s.agent)
         .filter((agent) => resultByAgent.get(agent)?.status === "ok")
-        .map((agent) => ({ agent, branch: worktreeByAgent.get(agent).branch }));
+        .map((agent) => ({ agent, branch: worktreeByAgent.get(agent).branch }))
+        .filter(({ branch }) => !alreadyMerged.has(branch));
       const checkCmd = opts.checkCmd ?? (env.GHCP_MAESTRO_CHECK_CMD || undefined);
       const runCheck =
         opts.runCheck ?? (checkCmd ? makeCheckRunner(checkCmd, opts.cwd) : undefined);
       await session.log(
-        `ghcp-maestro/${runId}: phase=integrate branches=${okBranches.length} target=${targetBranch}${checkCmd ? ` check="${checkCmd}"` : ""}`,
+        `ghcp-maestro/${runId}: phase=integrate branches=${okBranches.length}${alreadyMerged.size > 0 ? ` (skipping ${alreadyMerged.size} already merged)` : ""} target=${targetBranch}${checkCmd ? ` check="${checkCmd}"` : ""}`,
       );
       let integration;
       try {
@@ -727,6 +738,7 @@ export function createBuiltinWorkflows(deps) {
           .map((s) => ({
             agent: s.agent,
             dir: worktreeByAgent.get(s.agent).dir,
+            branch: worktreeByAgent.get(s.agent).branch,
           })),
         { exec: gitExec, cwd: opts.cwd },
       );
@@ -738,7 +750,8 @@ export function createBuiltinWorkflows(deps) {
       await run.patchManifest({
         write: {
           targetBranch,
-          merged: integration.merged,
+          // Cumulative across resume attempts — the filter above relies on it.
+          merged: [...alreadyMerged, ...integration.merged],
           failed: integration.failed,
           remaining: integration.remaining,
         },

@@ -31,22 +31,31 @@ export const ALLOW_DIRTY_FLAG = "--allow-dirty";
  * @returns {{ write: boolean, allowDirty: boolean, task: string }}
  */
 export function parseWriteFlags(raw) {
-  const tokens = String(raw ?? "")
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
   let write = false;
   let allowDirty = false;
-  const isFlag = (t) => t === WRITE_FLAG || t === ALLOW_DIRTY_FLAG;
   const take = (t) => {
     if (t === WRITE_FLAG) write = true;
     else allowDirty = true;
   };
-  let start = 0;
-  let end = tokens.length;
-  while (start < end && isFlag(tokens[start])) take(tokens[start++]);
-  while (end > start && isFlag(tokens[end - 1])) take(tokens[--end]);
-  return { write, allowDirty, task: tokens.slice(start, end).join(" ") };
+  // Strip flags from the edges only, leaving the interior verbatim — this
+  // preserves multi-line task text (newlines, indentation) instead of
+  // collapsing it through a split/join round trip.
+  let text = String(raw ?? "").trim();
+  let m;
+  while ((m = text.match(LEADING_FLAG_RE))) {
+    take(m[1]);
+    text = text.slice(m[0].length);
+  }
+  while ((m = text.match(TRAILING_FLAG_RE))) {
+    take(m[2]);
+    text = text.slice(0, text.length - m[0].length).trimEnd();
+  }
+  return { write, allowDirty, task: text.trim() };
 }
+
+const FLAG_ALTERNATION = [WRITE_FLAG, ALLOW_DIRTY_FLAG].join("|");
+const LEADING_FLAG_RE = new RegExp(`^(${FLAG_ALTERNATION})(\\s+|$)`);
+const TRAILING_FLAG_RE = new RegExp(`(^|\\s)(${FLAG_ALTERNATION})$`);
 
 /**
  * Default exec: run `git <args>` and resolve with collected output. Rejection
@@ -123,10 +132,16 @@ export async function assertWritableRepo(opts = {}) {
  * same-file-overwrite hazard is the top documented failure mode of parallel
  * write agents. Throws a human-readable Error the planner can retry against.
  *
+ * Returns the normalized scopes per subtask — callers must use these (not the
+ * raw plan strings) anywhere the scope is echoed into a child prompt, so a
+ * crafted plan can't smuggle arbitrary text through this channel.
+ *
  * @param {{ agent: string, files?: string[] }[]} specs
+ * @returns {{ agent: string, files: string[] }[]}
  */
 export function validateDisjointScopes(specs) {
   const claims = [];
+  const normalized = [];
   for (const spec of specs) {
     const files = spec.files;
     if (!Array.isArray(files) || files.length === 0) {
@@ -134,6 +149,7 @@ export function validateDisjointScopes(specs) {
         `write mode: subtask "${spec.agent}" must declare a non-empty "files" scope array`,
       );
     }
+    const normalizedFiles = [];
     for (const rawPath of files) {
       if (typeof rawPath !== "string" || rawPath.trim() === "") {
         throw new Error(`write mode: subtask "${spec.agent}" has an empty "files" entry`);
@@ -141,11 +157,13 @@ export function validateDisjointScopes(specs) {
       const path = normalizeScopePath(rawPath);
       if (path === null) {
         throw new Error(
-          `write mode: subtask "${spec.agent}" scope "${rawPath}" must be a relative path without ".."`,
+          `write mode: subtask "${spec.agent}" scope ${JSON.stringify(rawPath.slice(0, 120))} must be a plain relative path (no "..", no ".git", no control characters)`,
         );
       }
+      normalizedFiles.push(path);
       claims.push({ agent: spec.agent, path });
     }
+    normalized.push({ agent: spec.agent, files: normalizedFiles });
   }
   for (let i = 0; i < claims.length; i += 1) {
     for (let j = i + 1; j < claims.length; j += 1) {
@@ -159,17 +177,25 @@ export function validateDisjointScopes(specs) {
       }
     }
   }
+  return normalized;
 }
 
 /** @returns {string | null} normalized relative path, or null when invalid */
 function normalizeScopePath(rawPath) {
   const path = rawPath.trim().replace(/\\/g, "/");
+  // Scopes come from model output and are echoed into child prompts — reject
+  // control characters (incl. newlines) so a crafted scope can't inject
+  // instructions there, and reject anything under .git (case-insensitive):
+  // letting an agent write git internals would corrupt the repository.
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(path)) return null;
   if (path.startsWith("/") || /^[A-Za-z]:/.test(path)) return null;
   // Segment-wise normalization: collapse repeated slashes and "." segments so
   // variants like "src//a" or "src/./a" cannot slip past the overlap check.
   const segments = path.split("/").filter((s) => s !== "" && s !== ".");
   if (segments.length === 0) return null;
   if (segments.includes("..")) return null;
+  if (segments[0].toLowerCase() === ".git") return null;
   return segments.join("/");
 }
 
@@ -337,11 +363,14 @@ export function makeCheckRunner(cmd, cwd) {
 export async function integrateBranches(branches, opts) {
   const exec = opts.exec ?? execGit;
   const cwd = opts.cwd;
+  const currentHead = async () => {
+    const { stdout } = await exec(["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+    return stdout.trim();
+  };
   // Guard against the user having switched branches while agents ran — the
   // merges must land on the branch recorded at run start, not wherever HEAD
   // happens to be now.
-  const { stdout } = await exec(["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
-  const head = stdout.trim();
+  const head = await currentHead();
   if (head !== opts.targetBranch) {
     throw new Error(
       `integration expected branch "${opts.targetBranch}" but HEAD is on "${head}" — check out ${opts.targetBranch} and resume`,
@@ -350,6 +379,25 @@ export async function integrateBranches(branches, opts) {
   const merged = [];
   for (let i = 0; i < branches.length; i += 1) {
     const { agent, branch } = branches[i];
+    if (i > 0) {
+      // Re-check before every merge: the check command between merges is an
+      // arbitrary shell command (and the user may switch branches meanwhile),
+      // so HEAD can move mid-integration. Unlike the entry check, merges have
+      // already landed — report a failure result instead of throwing.
+      const nowHead = await currentHead();
+      if (nowHead !== opts.targetBranch) {
+        return {
+          merged,
+          failed: {
+            agent,
+            branch,
+            reason: `HEAD moved to "${nowHead}" during integration — expected "${opts.targetBranch}"`,
+            applied: false,
+          },
+          remaining: branches.slice(i + 1).map((b) => b.branch),
+        };
+      }
+    }
     try {
       await exec(
         [
@@ -401,9 +449,12 @@ export async function integrateBranches(branches, opts) {
 
 /**
  * Remove worktrees that are clean; keep (and report) any with uncommitted
- * work — never destroy unmerged agent output. Branches are always kept.
+ * work — never destroy unmerged agent output. When an entry carries a
+ * `branch`, it is deleted with `git branch -d` after a successful worktree
+ * removal — `-d` (not `-D`) so git itself refuses to delete anything that
+ * isn't fully merged; the deletion is best-effort and never blocks cleanup.
  *
- * @param {{ agent: string, dir: string }[]} worktrees
+ * @param {{ agent: string, dir: string, branch?: string }[]} worktrees
  * @param {{ exec?: typeof execGit, cwd?: string }} [opts]
  * @returns {Promise<{ removed: string[], kept: { agent: string, dir: string, reason: string }[] }>}
  */
@@ -431,6 +482,14 @@ export async function cleanupWorktrees(worktrees, opts = {}) {
     try {
       await exec(["worktree", "remove", wt.dir], { cwd: opts.cwd });
       removed.push(wt.dir);
+      if (wt.branch) {
+        try {
+          await exec(["branch", "-d", wt.branch], { cwd: opts.cwd });
+        } catch {
+          // -d refuses unmerged branches — exactly the safety we want. The
+          // branch simply stays around for manual inspection.
+        }
+      }
     } catch (err) {
       kept.push({ agent: wt.agent, dir: wt.dir, reason: `worktree remove failed: ${err?.message ?? err}` });
     }
