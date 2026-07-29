@@ -18,8 +18,26 @@ test("failRun marks the run errored, logs at error level, and returns the run", 
   const run = fakeRun();
   const returned = await failRun(session, run, "boom");
   assert.equal(returned, run);
-  assert.deepEqual(run.calls, [{ status: "error" }]);
+  assert.equal(run.calls.length, 1);
+  assert.equal(run.calls[0].status, "error");
+  assert.ok(typeof run.calls[0].finishedAt === "number" && run.calls[0].finishedAt > 0);
   assert.deepEqual(session.logs, [["boom", { level: "error" }]]);
+});
+
+test("failRun merges extra manifest fields into the error patch", async () => {
+  const session = fakeSession();
+  const run = fakeRun();
+  await failRun(session, run, "boom", { tokensUsed: 123 });
+  assert.equal(run.calls[0].tokensUsed, 123);
+  assert.equal(run.calls[0].status, "error");
+});
+
+test("failRun extraPatch cannot override the terminal status or finishedAt", async () => {
+  const session = fakeSession();
+  const run = fakeRun();
+  await failRun(session, run, "boom", { status: "stopped", finishedAt: 0 });
+  assert.equal(run.calls[0].status, "error");
+  assert.ok(run.calls[0].finishedAt > 0);
 });
 
 test("failRun patches the manifest before logging", async () => {

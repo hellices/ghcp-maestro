@@ -13,14 +13,15 @@
 import { DEFAULT_CONCURRENCY } from "./spawn.mjs";
 import { runPhase } from "./run-phase.mjs";
 import { createRun } from "./run-store.mjs";
-import { failRun, completeRun } from "./run-flow.mjs";
+import { failRun, completeRun, writeRunTrace } from "./run-flow.mjs";
 import { releaseRun } from "./run-registry.mjs";
 import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, augmentPromptWithDeps } from "./plan.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
-import { buildSynthPrompt } from "./synth.mjs";
+import { envModelRoutes, resolveModel } from "./model-routes.mjs";
+import { buildSynthPrompt, buildVerifyPrompt } from "./synth.mjs";
 import {
   exploreResultLine,
   wallClockLine,
@@ -31,6 +32,17 @@ import {
   labeledDumpLine,
   synthStatusLine,
 } from "./workflow-log.mjs";
+
+/**
+ * Spread-helper: `{ model }` when the routing map resolved one, `{}` otherwise —
+ * keeps unrouted specs byte-identical to the pre-#17 shape (agent-record cache
+ * compatibility across resumes).
+ *
+ * @param {string | undefined} model
+ */
+function withModel(model) {
+  return model !== undefined ? { model } : {};
+}
 
 /**
  * Compose the three built-in workflow handlers over an adapter provider.
@@ -241,11 +253,28 @@ export function createBuiltinWorkflows(deps) {
     // Per-run token budget (#14): accumulates per-turn usage across ALL phases;
     // when exceeded, un-started agents are skipped and the run soft-stops.
     const budget = createBudgetTracker(opts.budgetTokens ?? envBudgetTokens(env));
+    // Accounting stays cumulative across resumes: prior attempts' spend is kept
+    // separate from the tracker so enforcement still runs under a fresh budget
+    // (the resume contract), but the persisted tokensUsed never shrinks.
+    const priorTokens =
+      typeof run.manifest?.tokensUsed === "number" && run.manifest.tokensUsed > 0
+        ? run.manifest.tokensUsed
+        : 0;
+    const totalTokens = () => priorTokens + budget.used();
+    // Terminal manifest patch for accounting — every terminal path (complete,
+    // stopped, error) persists the cumulative spend when there is any.
+    const tokensPatch = () => (totalTokens() > 0 ? { tokensUsed: totalTokens() } : {});
+    // Model routing (#17): opt-in per-label model map ("plan" / "explore:<agent>"
+    // / "synth"). Null routes = every agent uses the adapter's default model.
+    const routes = opts.modelRoutes ?? envModelRoutes(env);
     await session.log(
       `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
     );
     if (budget.limit) {
       await session.log(`ghcp-maestro/${runId}: token budget: ${budget.limit} tokens`);
+    }
+    if (routes) {
+      await session.log(`ghcp-maestro/${runId}: model routes: ${JSON.stringify(routes)}`);
     }
     await logBackgroundHint(session, runId, opts);
 
@@ -256,6 +285,7 @@ export function createBuiltinWorkflows(deps) {
       agent: "plan",
       timeoutMs: TIMEOUT_AGENT_MS,
       prompt: buildPlanPrompt(task),
+      ...withModel(resolveModel("plan", routes)),
     };
     const {
       results: [planResult],
@@ -265,6 +295,7 @@ export function createBuiltinWorkflows(deps) {
         session,
         run,
         `ghcp-maestro/${runId}: plan agent ${planResult.status}: ${planResult.error ?? "(no error)"}`,
+        tokensPatch(),
       );
     }
     const planText = (planResult.output?.text ?? "").trim();
@@ -287,6 +318,7 @@ export function createBuiltinWorkflows(deps) {
         agent: "plan",
         timeoutMs: TIMEOUT_AGENT_MS,
         prompt: buildPlanPrompt(task, err.message, planText),
+        ...withModel(resolveModel("plan", routes)),
       };
       const {
         results: [retryResult],
@@ -296,6 +328,7 @@ export function createBuiltinWorkflows(deps) {
           session,
           run,
           `ghcp-maestro/${runId}: plan retry ${retryResult.status}: ${retryResult.error ?? "(no error)"}`,
+          tokensPatch(),
         );
       }
       try {
@@ -305,6 +338,7 @@ export function createBuiltinWorkflows(deps) {
           session,
           run,
           `ghcp-maestro/${runId}: plan retry also unparseable: ${err2.message}`,
+          tokensPatch(),
         );
       }
     }
@@ -344,9 +378,15 @@ export function createBuiltinWorkflows(deps) {
     });
     if (!gate.approved) {
       // Release first: releaseRun never throws, so the controller can't leak
-      // even if persisting the "stopped" status fails.
+      // even if persisting the "stopped" status fails. The plan agent already
+      // spent tokens, so the stopped manifest still gets accounting + a trace.
       releaseRun(runId);
-      await run.patchManifest({ status: "stopped" });
+      await run.patchManifest({
+        status: "stopped",
+        finishedAt: Date.now(),
+        ...tokensPatch(),
+      });
+      await writeRunTrace(run);
       await session.log(
         `ghcp-maestro/${runId}: task ${gate.reason === "empty-selection" ? "aborted (no subtasks selected)" : `cancelled by user (${gate.reason})`} — fan-out skipped`,
         { level: "warning" },
@@ -372,6 +412,7 @@ export function createBuiltinWorkflows(deps) {
       prompt: s.prompt,
       ...(s.dependsOn ? { dependsOn: s.dependsOn } : {}),
       timeoutMs: TIMEOUT_AGENT_MS,
+      ...withModel(resolveModel(`explore:${s.agent}`, routes)),
     }));
     // The gate may have deselected a dependency. Layer on deps filtered to the
     // selected set so planLayers can't throw "unknown dependency"; the skip
@@ -452,20 +493,60 @@ export function createBuiltinWorkflows(deps) {
         session,
         run,
         `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed${hint}`,
+        tokensPatch(),
       );
     }
 
-    // Budget soft-stop (#14): don't schedule the synth agent once the cap is
+    // Budget soft-stop (#14): don't schedule the next agent once the cap is
     // blown. The run stays resumable — /maestro-resume replays the cached ok
     // subtasks and reruns only the skipped/failed ones under a fresh budget.
-    if (budget.exceeded()) {
+    const budgetStop = async (before) => {
       releaseRun(runId);
-      await run.patchManifest({ status: "stopped" });
+      await run.patchManifest({
+        status: "stopped",
+        finishedAt: Date.now(),
+        tokensUsed: totalTokens(),
+      });
+      await writeRunTrace(run);
       await session.log(
-        `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before synth; finish it later with /maestro-resume ${runId}`,
+        `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before ${before}; finish it later with /maestro-resume ${runId}`,
         { level: "warning" },
       );
       return run;
+    };
+
+    // Optional verify phase (#31): one agent judges each subtask output against
+    // the original objective before synth (MAST: high-level objective
+    // verification). Opt-in only — an extra agent is extra spend, same
+    // principle as the budget: visibility always-on, cost opt-in. A verify
+    // failure is non-fatal: warn and synthesize without the report.
+    const verifyEnabled = opts.verify === true || isTruthyEnv(env.GHCP_MAESTRO_VERIFY);
+    if (budget.exceeded()) return budgetStop(verifyEnabled ? "verify" : "synth");
+    let verifyReport;
+    if (verifyEnabled) {
+      await session.log(`ghcp-maestro/${runId}: phase=verify agents=1`);
+      const verifySpec = {
+        id: "verify",
+        agent: "verify",
+        timeoutMs: TIMEOUT_AGENT_MS,
+        prompt: buildVerifyPrompt({ task, results: exploreResults }),
+        ...withModel(resolveModel("verify", routes)),
+      };
+      const {
+        results: [verify],
+      } = await runPhase([verifySpec], { run, runId, phase: "verify", adapter, budget });
+      if (verify.status === "ok") {
+        verifyReport = (verify.output?.text ?? "").trim() || undefined;
+        await session.log(labeledDumpLine(runId, "VERIFY REPORT", verify));
+      } else {
+        await session.log(
+          `ghcp-maestro/${runId}: verify agent ${verify.status}: ${verify.error ?? "(no error)"} — continuing to synth without a verification report`,
+          { level: "warning" },
+        );
+      }
+      // The verify agent itself consumes tokens — re-check so a cap blown by
+      // verify soft-stops the run instead of failing it when synth is skipped.
+      if (budget.exceeded()) return budgetStop("synth");
     }
 
     // Phase 3 — synth: merge into a single answer to the original task.
@@ -474,7 +555,8 @@ export function createBuiltinWorkflows(deps) {
       id: "synth",
       agent: "synth",
       timeoutMs: TIMEOUT_AGENT_MS,
-      prompt: buildSynthPrompt({ task, results: exploreResults }),
+      prompt: buildSynthPrompt({ task, results: exploreResults, verifyReport }),
+      ...withModel(resolveModel("synth", routes)),
     };
     const {
       results: [synth],
@@ -489,12 +571,25 @@ export function createBuiltinWorkflows(deps) {
         session,
         run,
         `ghcp-maestro/${runId}: task failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
+        tokensPatch(),
       );
     }
 
+    // Token accounting is always-on (independent of any cap): persist the
+    // aggregate so /maestros can show per-run cost even without a budget set.
+    // Cumulative across resumes — prior attempts' spend is never clobbered.
+    if (totalTokens() > 0) await run.patchManifest({ tokensUsed: totalTokens() });
     await completeRun(run);
+    // The `/limit` suffix only makes sense when the whole figure ran under the
+    // current attempt's cap — on resumes the total is cumulative across
+    // attempts while the cap is per-attempt, so the suffix would mislead.
+    const limitNote = budget.limit && priorTokens === 0 ? `/${budget.limit}` : "";
+    const tokensNote = totalTokens() > 0 ? ` tokens=${totalTokens()}${limitNote}` : "";
+    // Count the verify phase whenever it was enabled — the agent ran (and
+    // spent) even if it failed or produced an empty report.
+    const verifyRan = verifyEnabled ? 1 : 0;
     await session.log(
-      `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + 1} agents across 3 phases (plan + explore[${specs.length}] + synth)`,
+      `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + verifyRan + 1} agents across ${3 + verifyRan} phases (plan + explore[${specs.length}]${verifyRan ? " + verify" : ""} + synth)${tokensNote}`,
     );
     return run;
   }
