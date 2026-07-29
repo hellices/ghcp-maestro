@@ -266,6 +266,39 @@ test("createWorktrees still fails when the surviving directory is not on the bra
   );
 });
 
+test("createWorktrees rollback never removes a reused surviving worktree dir", async () => {
+  const calls = [];
+  const apiDir = join("/data/run1/worktrees", "api");
+  const exec = async (args) => {
+    calls.push(args.join(" "));
+    // api: branch AND worktree dir both survive from a previous attempt.
+    if (args[0] === "worktree" && args.includes("-b") && args[2] === apiDir) {
+      throw new Error("fatal: a branch named 'maestro/run1/api' already exists");
+    }
+    if (args[0] === "worktree" && args[1] === "add" && args[2] === apiDir) {
+      throw new Error(`fatal: '${apiDir}' already exists`);
+    }
+    if (args[0] === "-C") return { stdout: "maestro/run1/api\n", stderr: "" };
+    // boom: a later add fails and triggers rollback.
+    if (args[0] === "worktree" && args[1] === "add" && args[2].endsWith("boom")) {
+      throw new Error("fatal: disk full");
+    }
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    () =>
+      createWorktrees([{ agent: "api" }, { agent: "boom" }], {
+        exec,
+        root: "/data/run1/worktrees",
+        runId: "run1",
+      }),
+    /disk full/,
+  );
+  // The reused api worktree (may hold uncommitted agent output) survives.
+  assert.ok(!calls.includes(`worktree remove ${apiDir}`));
+  assert.ok(!calls.includes("branch -D maestro/run1/api"));
+});
+
 test("createWorktrees propagates unrelated git failures", async () => {
   const exec = async () => {
     throw new Error("fatal: disk full");
