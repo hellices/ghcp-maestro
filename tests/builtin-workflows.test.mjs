@@ -783,6 +783,34 @@ test("task workflow aborts before any run exists when an @file is unreadable (#3
   });
 });
 
+test("task workflow rethrows @file failures on resume so the run is failed, not stuck (#39)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const adapter = {
+      name: "never",
+      async invoke() {
+        throw new Error("should not be invoked");
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    // A pre-existing RunHandle marks the resume path: resolveTaskInputs must
+    // throw (resumeRun's failRun handles it) instead of returning null, which
+    // would leave the manifest stuck in "running".
+    const existingRun = { runId: "r1", manifest: { args: { task: "@missing.md go" } } };
+    await assert.rejects(
+      () =>
+        runTaskWorkflow(session, "@missing.md go", {
+          run: existingRun,
+          cwd: "/proj",
+          readFile: async () => {
+            throw new Error("ENOENT");
+          },
+        }),
+      /cannot read @missing\.md/,
+    );
+  });
+});
+
 test("task workflow without @refs keeps prompts byte-identical (#39)", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();

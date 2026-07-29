@@ -27,7 +27,8 @@ markdown file and reference it with `@`:
 /maestro task @docs/refactor-spec.md focus on the API layer first
 ```
 
-The host reads each `@path` (relative to the current directory) **before the
+The host reads each `@path` (relative to the current directory; absolute
+paths work too) **before the
 run starts** and inlines the content — fenced, with the filename — into the
 plan prompt and every subtask prompt. Each isolated child session therefore
 sees the full spec without having to rediscover the file. The one-line text

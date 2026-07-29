@@ -104,7 +104,7 @@ export function buildFileRefsBlock(files) {
   if (!files || files.length === 0) return "";
   const parts = [
     "",
-    "Reference material provided by the user (treat as the authoritative spec for this task):",
+    "Reference material provided by the user (treat as the authoritative spec for this run):",
   ];
   for (const f of files) {
     parts.push("", `--- file: ${f.path} ---`, f.content, `--- end of ${f.path} ---`);
