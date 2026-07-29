@@ -179,7 +179,8 @@ run 당 에이전트 하나만큼 비용이 더 든다. 검증 에이전트가 �
 
 **OTel GenAI 스타일 trace 내보내기.**
 종료 상태(complete / stopped / error)에 도달한 모든 run 은 매니페스트 옆에
-`trace.json` 을 쓴다: `invoke_workflow` 루트 span 하나 + 에이전트별
+`trace.json` 을 쓴다 (best-effort — IO 실패는 run 을 실패시키지 않고
+넘어간다): `invoke_workflow` 루트 span 하나 + 에이전트별
 `invoke_agent` span, OpenTelemetry GenAI 시맨틱 컨벤션 속성 이름
 (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.conversation.id`,
 `gen_ai.usage.total_tokens`, `error.type`) 사용. OTel 스타일 JSON 문서이지

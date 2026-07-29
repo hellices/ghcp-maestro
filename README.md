@@ -187,7 +187,8 @@ summary, or `/maestros <runId>` for the full per-agent dashboard.
 
 **OTel GenAI-style trace export.**
 Every run that reaches a terminal state (complete / stopped / error) writes a
-`trace.json` next to its manifest: one `invoke_workflow` root span plus an
+`trace.json` next to its manifest (best-effort — a trace write failure is
+swallowed and never fails the run): one `invoke_workflow` root span plus an
 `invoke_agent` span per agent, using OpenTelemetry GenAI semantic-convention
 attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`,
 `gen_ai.conversation.id`, `gen_ai.usage.total_tokens`, `error.type`). It is an
