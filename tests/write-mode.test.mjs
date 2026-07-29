@@ -282,6 +282,7 @@ test("integrateBranches aborts the conflicted merge and reports the remainder", 
   assert.deepEqual(result.merged, ["maestro/r/a"]);
   assert.equal(result.failed.agent, "b");
   assert.match(result.failed.reason, /merge conflict/i);
+  assert.equal(result.failed.applied, false);
   assert.deepEqual(result.remaining, ["maestro/r/c"]);
   // The half-applied merge was aborted, and c was never attempted.
   assert.ok(calls.includes("merge --abort"));
@@ -307,6 +308,9 @@ test("integrateBranches stops when the check command fails, keeping the merge vi
   assert.deepEqual(result.merged, []);
   assert.equal(result.failed.agent, "a");
   assert.match(result.failed.reason, /check failed after merge: 2 tests failed/);
+  // The merge itself succeeded and stays applied — callers must not report
+  // this branch as unmerged.
+  assert.equal(result.failed.applied, true);
   assert.deepEqual(result.remaining, ["maestro/r/b"]);
 });
 
