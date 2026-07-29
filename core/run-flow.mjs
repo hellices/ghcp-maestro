@@ -40,14 +40,16 @@ export async function writeRunTrace(run) {
  * @param {{ log: (msg: string, opts?: { level?: string }) => unknown | Promise<unknown> }} session
  * @param {{ patchManifest?: (patch: object) => unknown | Promise<unknown>, runId?: string } | undefined} run
  * @param {string} message
- * @param {object} [extraPatch] - extra manifest fields to persist with the error status (e.g. tokensUsed)
+ * @param {object} [extraPatch] - extra manifest fields to persist with the error status (e.g. tokensUsed); cannot override status/finishedAt
  * @returns {Promise<object | undefined>} the same run handle that was passed in
  */
 export async function failRun(session, run, message, extraPatch = {}) {
   // Persisting the terminal status is best-effort: an IO failure here must never
   // swallow the user-facing error log below (that log is the whole point).
   try {
-    await run?.patchManifest?.({ status: "error", finishedAt: Date.now(), ...extraPatch });
+    // extraPatch first: the terminal status/finishedAt are this helper's
+    // contract and must win over anything a caller passes.
+    await run?.patchManifest?.({ ...extraPatch, status: "error", finishedAt: Date.now() });
   } catch {
     // ignore — fall through to log the original failure
   }

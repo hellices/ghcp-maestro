@@ -50,10 +50,18 @@ export function buildVerifyPrompt({ task, results }) {
 }
 
 /**
+ * Cap on the verify-report text spliced into the synth prompt: the report is
+ * model-generated and unbounded, and the verdict lines land early — a runaway
+ * report must not blow up the synth context window.
+ */
+export const MAX_VERIFY_REPORT_CHARS = 8_000;
+
+/**
  * Build the synthesis prompt fed to the final synth agent: a fixed instruction
  * header, the original task, and a per-agent digest of the fan-out outputs.
  * When a verification report is provided (opt-in verify phase, #31), it is
- * appended so synthesis can weigh unverified claims.
+ * appended (truncated to MAX_VERIFY_REPORT_CHARS) so synthesis can weigh
+ * unverified claims.
  *
  * @param {{
  *   task: string,
@@ -94,7 +102,7 @@ export function buildSynthPrompt({ task, results, verifyReport }) {
           "",
           "A verification agent independently judged each subtask against the original objective. Weigh its verdicts when merging — do not present 'not-met' or 'partially-met' claims as settled facts:",
           UNTRUSTED_OPEN,
-          neutralizeUntrusted(verifyReport),
+          neutralizeUntrusted(verifyReport.slice(0, MAX_VERIFY_REPORT_CHARS)),
           UNTRUSTED_CLOSE,
         ]
       : []),
