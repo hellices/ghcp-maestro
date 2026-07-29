@@ -204,6 +204,40 @@ test("phase gate: off by default — no pause even on an interactive host (#15)"
   });
 });
 
+test("phase gate: skipped when the budget is already blown — no misleading dialog (#15)", async () => {
+  await withTempDataDir(async () => {
+    let phaseDialogs = 0;
+    const session = interactiveSession((params) => {
+      if (params.requestedSchema?.properties?.subtasks) {
+        return { action: "accept", content: { subtasks: ["0", "1", "2"] } };
+      }
+      phaseDialogs += 1;
+      return { action: "accept", content: { proceed: true } };
+    });
+    // Every agent reports 1000 tokens; a 1500-token budget is blown during
+    // the explore fan-out, so verify/synth can't run no matter the answer.
+    const adapter = {
+      name: "tokens",
+      async invoke(spec, ctx) {
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return { text: JSON.stringify([{ agent: "a", prompt: "pa" }, { agent: "b", prompt: "pb" }, { agent: "c", prompt: "pc" }]) };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => adapter,
+      env: { GHCP_MAESTRO_PHASE_GATE: "1" },
+    });
+    const run = await runTaskWorkflow(session, "do the thing", { budgetTokens: 1500 });
+    assert.equal(run.manifest.status, "stopped");
+    assert.equal(phaseDialogs, 0, "the gate must not prompt when the budget stop is inevitable");
+    assert.ok(session.logs.some((l) => /phase gate skipped/.test(l) && /budget/.test(l)));
+    assert.ok(session.logs.some((l) => /token budget exceeded/.test(l)));
+  });
+});
+
 test("phase gate: resume auto-approves — a stopped run finishes without a dialog (#15)", async () => {
   await withTempDataDir(async () => {
     const declineSession = interactiveSession((params) =>

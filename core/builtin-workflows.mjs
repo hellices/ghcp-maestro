@@ -690,7 +690,17 @@ export function createBuiltinWorkflows(deps) {
     // outputs and stop BEFORE anything is merged. Declining stops the run
     // (resumable: cached ok agents replay, and resume auto-approves the gate).
     const phaseGateEnabled = opts.phaseGate === true || isTruthyEnv(env.GHCP_MAESTRO_PHASE_GATE);
-    if (phaseGateEnabled) {
+    // With the budget already blown, verify/synth won't run regardless of the
+    // answer — asking "continue?" and then soft-stopping anyway would mislead.
+    // Skip the dialog and let the budget stop speak. Write mode still gates:
+    // integration is a real next step that runs even over budget.
+    const gateMootOverBudget = budget.exceeded() && !writeMode;
+    if (phaseGateEnabled && gateMootOverBudget) {
+      await session.log(
+        `ghcp-maestro/${runId}: phase gate skipped — token budget already exceeded, the run will soft-stop`,
+      );
+    }
+    if (phaseGateEnabled && !gateMootOverBudget) {
       const nextPhase = writeMode
         ? "integrate"
         : opts.verify === true || isTruthyEnv(env.GHCP_MAESTRO_VERIFY)
