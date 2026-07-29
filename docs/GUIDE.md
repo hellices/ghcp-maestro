@@ -106,6 +106,18 @@ On an interactive host, ghcp-maestro pauses after planning to show the subtask
 list with prompt previews. Approve everything, run only a subset, or abort —
 before any of the expensive parallel work starts.
 
+### Mid-run phase gate (opt-in)
+
+Set `GHCP_MAESTRO_PHASE_GATE=1` to pause a second time after the fan-out
+completes — before the next spend (write-mode integration, verify, or synth).
+The gate shows a per-agent digest (status + output preview) and asks whether
+to continue. Declining stops the run without losing anything: completed agent
+outputs are cached, and `/maestro-resume` replays them and finishes the run
+(resume auto-approves both gates). In write mode the gate sits **before** any
+branch is merged, so you can inspect what the agents produced and stop with
+the repository untouched. Off by default; requires a host with elicitation
+support (non-interactive hosts continue automatically).
+
 ### Cost visibility and a token budget
 
 Before fan-out the gate shows a run-size estimate, and runs of
@@ -215,6 +227,7 @@ intentionally omitted here.)
 | Variable | Default | What it does |
 | :-- | :-- | :-- |
 | `GHCP_MAESTRO_AUTO_APPROVE` | off | Skip the plan approval gate; always run every subtask |
+| `GHCP_MAESTRO_PHASE_GATE` | off | Pause after the fan-out (before integrate/verify/synth) to review agent outputs |
 | `GHCP_MAESTRO_BUDGET_TOKENS` | unlimited | Token cap per run attempt (`500k` / `2m` shorthand); soft-stops the run when hit |
 | `GHCP_MAESTRO_MODEL_ROUTES` | none | JSON map of agent label → model (`plan`, `explore:<agent>`, `verify`, `synth`; `*` wildcards) |
 | `GHCP_MAESTRO_VERIFY` | off | Insert a verify phase between fan-out and synthesis (one extra agent per run) |

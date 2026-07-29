@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   planApprovalGate,
+  phaseApprovalGate,
 } from "../core/plan-approval.mjs";
 
 // A fake `session.ui` that records the params it was called with and replies
@@ -185,4 +186,108 @@ test("an estimate string is shown in the note and the elicitation message", asyn
   assert.equal(res.approved, true);
   assert.ok(notes.some((n) => /est\. run size: medium/.test(n)));
   assert.match(captured.message, /est\. run size: medium/);
+});
+
+// ── phaseApprovalGate (#15) ────────────────────────────────────────────────
+
+const PHASE_RESULTS = [
+  { agent: "alpha", status: "ok", preview: "alpha findings" },
+  { agent: "beta", status: "ok", preview: "beta findings" },
+  { agent: "gamma", status: "error", preview: "boom" },
+];
+
+test("phase gate: autoApprove proceeds without a dialog (#15)", async () => {
+  const ui = fakeUi(() => {
+    throw new Error("ui must not be called when autoApprove is set");
+  });
+  const res = await phaseApprovalGate({
+    phase: "explore",
+    next: "synth",
+    results: PHASE_RESULTS,
+    ui,
+    capabilities: INTERACTIVE,
+    autoApprove: true,
+  });
+  assert.equal(res.approved, true);
+  assert.equal(res.reason, "auto-approve");
+  assert.equal(ui.calls.length, 0);
+});
+
+test("phase gate: non-interactive host proceeds without a dialog (#15)", async () => {
+  const ui = fakeUi(() => {
+    throw new Error("ui must not be called on a non-interactive host");
+  });
+  for (const capabilities of [undefined, {}, { ui: {} }, { ui: { elicitation: false } }]) {
+    const res = await phaseApprovalGate({ results: PHASE_RESULTS, ui, capabilities });
+    assert.equal(res.approved, true, JSON.stringify(capabilities));
+    assert.equal(res.reason, "non-interactive");
+  }
+  assert.equal(ui.calls.length, 0);
+});
+
+test("phase gate: accepting proceeds to the next phase (#15)", async () => {
+  const ui = fakeUi(() => ({ action: "accept", content: { proceed: true } }));
+  const res = await phaseApprovalGate({
+    phase: "explore",
+    next: "synth",
+    results: PHASE_RESULTS,
+    ui,
+    capabilities: INTERACTIVE,
+  });
+  assert.equal(res.approved, true);
+  assert.equal(res.reason, "approved");
+  assert.equal(ui.calls.length, 1);
+});
+
+test("phase gate: accepting with proceed unchecked stops the run (#15)", async () => {
+  const ui = fakeUi(() => ({ action: "accept", content: { proceed: false } }));
+  const res = await phaseApprovalGate({
+    results: PHASE_RESULTS,
+    ui,
+    capabilities: INTERACTIVE,
+  });
+  assert.equal(res.approved, false);
+  assert.equal(res.reason, "declined");
+});
+
+test("phase gate: declining or cancelling stops the run (#15)", async () => {
+  for (const [action, reason] of [["decline", "declined"], ["cancel", "cancelled"]]) {
+    const ui = fakeUi(() => ({ action }));
+    const res = await phaseApprovalGate({ results: PHASE_RESULTS, ui, capabilities: INTERACTIVE });
+    assert.equal(res.approved, false, action);
+    assert.equal(res.reason, reason);
+  }
+});
+
+test("phase gate: a dialog that throws fails closed (#15)", async () => {
+  const ui = fakeUi(() => {
+    throw new Error("host dialog crashed");
+  });
+  const res = await phaseApprovalGate({ results: PHASE_RESULTS, ui, capabilities: INTERACTIVE });
+  assert.equal(res.approved, false);
+  assert.match(res.reason, /^error:/);
+});
+
+test("phase gate: per-agent digest is logged and the message counts ok/failed (#15)", async () => {
+  const logs = [];
+  let captured;
+  const ui = {
+    async elicitation(params) {
+      captured = params;
+      return { action: "accept", content: { proceed: true } };
+    },
+  };
+  await phaseApprovalGate({
+    phase: "explore",
+    next: "synth",
+    results: PHASE_RESULTS,
+    ui,
+    capabilities: INTERACTIVE,
+    log: (m) => { logs.push(m); },
+  });
+  assert.ok(logs.some((l) => l.includes("alpha") && l.includes("ok") && l.includes("alpha findings")));
+  assert.ok(logs.some((l) => l.includes("gamma") && l.includes("error")));
+  assert.match(captured.message, /2 ok/);
+  assert.match(captured.message, /1 failed/);
+  assert.match(captured.message, /synth/);
 });

@@ -129,6 +129,102 @@ test("task workflow warns about large fan-outs at the gate", async () => {
   });
 });
 
+/** Interactive fake session: elicitation capability + scripted dialog replies. */
+function interactiveSession(respond) {
+  const session = fakeSession();
+  session.capabilities = { ui: { elicitation: true } };
+  session.ui = {
+    async elicitation(params) {
+      return respond(params);
+    },
+  };
+  return session;
+}
+
+test("phase gate: declining after explore stops the run before synth (#15)", async () => {
+  await withTempDataDir(async () => {
+    const invoked = [];
+    const adapter = () => ({
+      name: "spy",
+      async invoke(spec) {
+        invoked.push(spec.agent);
+        if (spec.agent === "plan") {
+          return { text: JSON.stringify([{ agent: "a", prompt: "pa" }, { agent: "b", prompt: "pb" }, { agent: "c", prompt: "pc" }]) };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    });
+    // Plan gate accepts everything; phase gate declines.
+    const session = interactiveSession((params) =>
+      params.requestedSchema?.properties?.subtasks
+        ? { action: "accept", content: { subtasks: ["0", "1", "2"] } }
+        : { action: "decline" },
+    );
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: adapter,
+      env: { GHCP_MAESTRO_PHASE_GATE: "1" },
+    });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "stopped");
+    assert.equal(invoked.includes("synth"), false);
+    assert.ok(session.logs.some((l) => /phase gate/.test(l) && /maestro-resume/.test(l)));
+  });
+});
+
+test("phase gate: accepting after explore continues to synth (#15)", async () => {
+  await withTempDataDir(async () => {
+    const session = interactiveSession((params) =>
+      params.requestedSchema?.properties?.subtasks
+        ? { action: "accept", content: { subtasks: ["0", "1", "2"] } }
+        : { action: "accept", content: { proceed: true } },
+    );
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: testAdapter,
+      env: { GHCP_MAESTRO_PHASE_GATE: "1" },
+    });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+  });
+});
+
+test("phase gate: off by default — no pause even on an interactive host (#15)", async () => {
+  await withTempDataDir(async () => {
+    let phaseDialogs = 0;
+    const session = interactiveSession((params) => {
+      if (params.requestedSchema?.properties?.subtasks) {
+        return { action: "accept", content: { subtasks: ["0", "1", "2"] } };
+      }
+      phaseDialogs += 1;
+      return { action: "decline" };
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    assert.equal(phaseDialogs, 0);
+  });
+});
+
+test("phase gate: resume auto-approves — a stopped run finishes without a dialog (#15)", async () => {
+  await withTempDataDir(async () => {
+    const declineSession = interactiveSession((params) =>
+      params.requestedSchema?.properties?.subtasks
+        ? { action: "accept", content: { subtasks: ["0", "1", "2"] } }
+        : { action: "decline" },
+    );
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: testAdapter,
+      env: { GHCP_MAESTRO_PHASE_GATE: "1" },
+    });
+    const run = await runTaskWorkflow(declineSession, "do the thing");
+    assert.equal(run.manifest.status, "stopped");
+    // Resume on a non-interactive session must replay the cached explore
+    // results and run synth without pausing at either gate.
+    const session = fakeSession();
+    const resumed = await runTaskWorkflow(session, "do the thing", { run });
+    assert.equal(resumed.manifest.status, "complete");
+  });
+});
+
 test("task workflow soft-stops before synth when the token budget is exceeded", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();
