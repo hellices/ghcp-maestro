@@ -12,9 +12,9 @@ external service.
 
 ![A /maestro task run: plan → approval gate → parallel fan-out with a live agent dashboard → synthesized final answer](docs/assets/demo.gif)
 
-<sub>Scripted replay of a real `/maestro task` run — the log lines are the
-runtime's actual output format; only the timings are compressed. Regenerate
-with [`vhs demo/demo.tape`](demo/demo.tape).</sub>
+<sub>Scripted replay of a `/maestro task` run — the log lines closely mirror
+the runtime's real output; color is added and timings are compressed for the
+GIF. Regenerate with [`vhs demo/demo.tape`](demo/demo.tape).</sub>
 
 > ghcp-maestro is a GitHub Copilot CLI take on the **orchestrator-workers**
 > pattern: plan → fan out parallel agents → cross-check → one synthesized answer,
@@ -216,7 +216,9 @@ claim across multiple sources).
 ## Configuration
 
 Everything is tuned through environment variables — visibility features are
-always on, and everything that spends extra tokens is opt-in.
+always on, and everything that spends extra tokens is opt-in. (Diagnostic
+probe knobs — `GHCP_MAESTRO_PROBE_*`, `GHCP_MAESTRO_TIMEOUT_PROBE_MS` — are
+intentionally omitted here.)
 
 | Variable | Default | What it does |
 | :-- | :-- | :-- |
