@@ -31,6 +31,11 @@ import {
   makeCheckRunner,
 } from "./write-mode.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
+
+// Worktree dirs and branch names land on case-insensitive filesystems
+// (Windows/macOS default), where "API" and "api" are the same directory —
+// hence the lowercasing on top of the base sanitizer.
+const sanitizeWriteAgentName = (name) => sanitizeAgentName(name).toLowerCase();
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { envModelRoutes, resolveModel } from "./model-routes.mjs";
 import { buildSynthPrompt, buildVerifyPrompt } from "./synth.mjs";
@@ -404,7 +409,10 @@ export function createBuiltinWorkflows(deps) {
         validateDisjointScopes(parsed);
         const sanitized = new Map();
         for (const s of parsed) {
-          const key = sanitizeAgentName(s.agent);
+          // Lowercased key: worktree dirs land on case-insensitive
+          // filesystems (Windows/macOS default), where "API" and "api" are
+          // the same directory.
+          const key = sanitizeWriteAgentName(s.agent);
           if (sanitized.has(key)) {
             throw new Error(
               `write mode: agent ids "${sanitized.get(key)}" and "${s.agent}" collide after sanitization ("${key}") — branch and worktree names must be unique; rename one`,
@@ -521,7 +529,7 @@ export function createBuiltinWorkflows(deps) {
     if (writeMode) {
       const worktreeRoot = join(run.runDir, "worktrees");
       try {
-        worktrees = await createWorktrees(specs.map((s) => ({ agent: sanitizeAgentName(s.agent) })), {
+        worktrees = await createWorktrees(specs.map((s) => ({ agent: sanitizeWriteAgentName(s.agent) })), {
           exec: gitExec,
           cwd: opts.cwd,
           root: worktreeRoot,
