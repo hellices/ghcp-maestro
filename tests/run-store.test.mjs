@@ -324,3 +324,25 @@ test("appendAgentEvent rejects path-escaping agent ids and caps tail reads", asy
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+
+test("readAgentEvents tails only maxBytes from large logs, dropping the partial first line", async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), "ghcp-maestro-store-tail-"));
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    for (let i = 0; i < 200; i++) {
+      await run.appendAgentEvent("big", { seq: i, pad: "x".repeat(50) });
+    }
+    // small window: only the newest events fit, and the window almost
+    // certainly starts mid-line — that partial line must be discarded
+    const tail = await run.readAgentEvents("big", { maxBytes: 1024 });
+    assert.ok(tail.length > 0);
+    assert.ok(tail.length < 200);
+    assert.equal(tail[tail.length - 1].seq, 199);
+    // events are consecutive (no torn/garbled entry survived at the head)
+    for (let i = 1; i < tail.length; i++) {
+      assert.equal(tail[i].seq, tail[i - 1].seq + 1);
+    }
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});

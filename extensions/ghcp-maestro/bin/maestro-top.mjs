@@ -128,9 +128,8 @@ async function main() {
   // Follow loop: poll until the run reaches a terminal status. In TTY mode the
   // final frame stays up (with keys live) until the user quits; in non-TTY
   // mode exit after printing it.
-  let running = true;
-  while (running) {
-    running = await paint();
+  for (;;) {
+    const running = await paint();
     if (!running) break;
     await new Promise((r) => setTimeout(r, POLL_MS));
   }

@@ -21,6 +21,7 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rename,
@@ -204,20 +205,39 @@ function makeHandle(runDir, manifest) {
     /**
      * Read an agent's event stream, oldest first. Tolerates a torn last line
      * (a crash mid-append) by skipping unparseable lines. `limit` keeps only
-     * the most recent N events. Missing file → [].
+     * the most recent N events. Only the trailing `maxBytes` of the file are
+     * read and parsed (default 256 KiB) so tailing a long-running agent's log
+     * stays cheap; when the window starts mid-file, the partial first line is
+     * discarded. Missing file → [].
      *
      * @param {string} agentId
-     * @param {{ limit?: number }} [opts]
+     * @param {{ limit?: number, maxBytes?: number }} [opts]
      * @returns {Promise<object[]>}
      */
     async readAgentEvents(agentId, opts = {}) {
       assertSafeAgentId(agentId);
+      const maxBytes = opts.maxBytes ?? 256 * 1024;
       let raw;
+      let truncatedHead = false;
+      let fh;
       try {
-        raw = await readFile(join(runDir, "logs", `${agentId}.ndjson`), "utf8");
+        fh = await open(join(runDir, "logs", `${agentId}.ndjson`), "r");
+        const { size } = await fh.stat();
+        const start = Math.max(0, size - maxBytes);
+        truncatedHead = start > 0;
+        const buf = Buffer.alloc(size - start);
+        await fh.read(buf, 0, buf.length, start);
+        raw = buf.toString("utf8");
       } catch (err) {
         if (err?.code === "ENOENT") return [];
         throw err;
+      } finally {
+        await fh?.close();
+      }
+      // a window starting mid-file almost always begins mid-line — drop it
+      if (truncatedHead) {
+        const nl = raw.indexOf("\n");
+        raw = nl === -1 ? "" : raw.slice(nl + 1);
       }
       const events = [];
       for (const line of raw.split("\n")) {
