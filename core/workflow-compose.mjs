@@ -166,8 +166,11 @@ export function stripLiterals(code) {
   let state = "none";
   const tplExprDepth = [];
   const regexCanFollow = (s) => {
-    const prev = s.replace(/\s+$/, "").slice(-1);
-    return prev === "" || "(,=:[!&|?{};+-*%<>~^".includes(prev);
+    const t = s.replace(/\s+$/, "");
+    const prev = t.slice(-1);
+    if (prev === "" || "(,=:[!&|?{};+-*%<>~^".includes(prev)) return true;
+    // keywords that end in an identifier char but cannot end an expression
+    return /(?:^|[^\w$])(?:return|throw|typeof|case|in|of|delete|void|do|else|yield|await|instanceof|new)$/.test(t);
   };
   while (i < n) {
     const c = code[i];
@@ -269,7 +272,7 @@ export function scanForbiddenGlobals(code) {
  * with the process instead of stalling the host session.
  *
  * @param {string} code
- * @param {{ log?: Function, timeoutMs?: number }} [opts]
+ * @param {{ timeoutMs?: number }} [opts]
  */
 export async function dryRunWorkflowCode(code, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DRY_RUN_TIMEOUT_MS;
@@ -455,7 +458,7 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
   // runnable. A failure keeps the draft for manual editing.
   const dryRun = opts.dryRun ?? dryRunWorkflowCode;
   try {
-    await dryRun(code, { log: () => {} });
+    await dryRun(code);
   } catch (err) {
     const draftFile = await writeDraft(destDir, name, code);
     await warn(

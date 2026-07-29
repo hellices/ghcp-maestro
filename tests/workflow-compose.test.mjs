@@ -113,6 +113,9 @@ test("scanForbiddenGlobals flags escapes but not prompt text", () => {
   // ...while division stays division and regex patterns stay unscanned
   assert.equal(scanForbiddenGlobals("const y = a / b / c;").length, 0);
   assert.equal(scanForbiddenGlobals("const r = /process/; r.test(s);").length, 0);
+  // regex literals after expression-ending keywords are literals too
+  assert.equal(scanForbiddenGlobals("function f() { return /process/; }").length, 0);
+  assert.equal(scanForbiddenGlobals("if (x) throw /fetch/;").length, 0);
 });
 
 // ── buildComposePrompt ──────────────────────────────────────────────────────
