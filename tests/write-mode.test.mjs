@@ -16,7 +16,7 @@ import {
 
 // --- parseWriteFlags --------------------------------------------------------
 
-test("parseWriteFlags extracts --write and --allow-dirty from anywhere in the line", () => {
+test("parseWriteFlags extracts --write and --allow-dirty at the line edges", () => {
   assert.deepEqual(parseWriteFlags("--write migrate the client"), {
     write: true,
     allowDirty: false,
