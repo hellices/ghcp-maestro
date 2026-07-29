@@ -179,6 +179,13 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 `multiAngle` (다관점 초안 후 심사), `fixLoop` (검사를 통과할 때까지 수정 반복),
 `crossCheck` (여러 출처로 주장 교차 검증).
 
+`fixLoop` 는 명시적 수렴 기준도 받는다: `until` 술어 (외부에서 검증 가능한
+조건 — 예: PASS 를 답해야 하는 검증 에이전트 — 로, check 의 ok 대신 종료
+조건이 된다) 와 `stallRounds` (check 리포트가 변하지 않는 라운드가 N 회
+연속되면 중단). 결과에는 `stopReason` (`converged` / `stalled` / `max-iters`)
+과 마지막 `evidence` 문자열이 담겨 루프가 멈춘 이유를 최종 답변에 인용할 수
+있다.
+
 ---
 
 ## 설정
