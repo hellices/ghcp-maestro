@@ -206,10 +206,10 @@ receives the workflow-api reference plus your description and generates the
 module. The result is statically validated (parse + a scan that rejects any
 escape from the injected `api` — imports, `process`, `fetch`, `eval`, …),
 shown to you for review, dry-run against a token-free echo adapter only after
-you approve, and saved to the project workflows directory as
-`/maestro run <name>`. Add `--name <kebab>` to pick the name and `--force` to
-overwrite. On a non-interactive host nothing is executed or saved — the
-script lands as a `.draft` file for manual review.
+you approve, and saved to the project workflows directory — from there it is
+runnable via `/maestro run <name>`. Add `--name <kebab>` to pick the name and
+`--force` to overwrite. On a non-interactive host nothing is executed or
+saved — the script lands as a `.draft` file for manual review.
 
 ### Quality helpers
 
