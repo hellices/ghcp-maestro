@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBuiltinWorkflows } from "../core/builtin-workflows.mjs";
+import { buildPlanPrompt } from "../core/plan.mjs";
 
 // A deterministic in-process adapter: the plan agent returns a valid 3-entry
 // JSON plan; every other agent echoes a per-agent line. Lets the extracted
@@ -833,7 +834,9 @@ test("task workflow without @refs keeps prompts byte-identical (#39)", async () 
     };
     const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
     await runTaskWorkflow(session, "do the thing");
-    assert.ok(planPrompt.endsWith("Task: do the thing"));
+    // Cache compatibility is a byte-shape contract: without @refs the plan
+    // prompt must equal the pre-#39 baseline exactly.
+    assert.equal(planPrompt, buildPlanPrompt("do the thing"));
     assert.ok(!planPrompt.includes("Reference material"));
   });
 });

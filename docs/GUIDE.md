@@ -48,7 +48,8 @@ Rules and limits:
   paths resolve against the directory you resume from — resume from the same
   directory to get the same files.
 - Remember every subtask prompt carries the spec: a big spec × a wide fan-out
-  multiplies token cost. The gate's run-size estimate reflects prompt sizes.
+  multiplies token cost. (The gate's low/medium/high estimate is based on
+  agent count, not prompt size — factor the spec in yourself.)
 - The referenced file contents are sent to the model in every prompt — never
   reference files containing secrets, credentials, or other sensitive data.
 
