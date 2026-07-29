@@ -11,7 +11,8 @@
 //
 //   { "explore:*": "fast-model", "synth": "premium-model", "*": "default" }
 //
-// The task workflow resolves labels `plan`, `explore:<agent>`, and `synth`.
+// The task workflow resolves labels `plan`, `explore:<agent>`, `verify`, and
+// `synth`.
 // An unmatched label leaves `spec.model` undefined so the adapter falls back
 // to its own default model.
 
