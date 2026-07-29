@@ -285,9 +285,28 @@ test("phase gate: per-agent digest is logged and the message counts ok/failed (#
     capabilities: INTERACTIVE,
     log: (m) => { logs.push(m); },
   });
-  assert.ok(logs.some((l) => l.includes("alpha") && l.includes("ok") && l.includes("alpha findings")));
-  assert.ok(logs.some((l) => l.includes("gamma") && l.includes("error")));
+  assert.ok(logs.some((l) => /alpha \[ok\].*alpha findings/.test(l)));
+  assert.ok(logs.some((l) => /gamma \[error\]/.test(l)));
   assert.match(captured.message, /2 ok/);
   assert.match(captured.message, /1 failed/);
   assert.match(captured.message, /synth/);
+});
+
+test("phase gate: a missing status counts as unknown, not failed (#15)", async () => {
+  let captured;
+  const ui = {
+    async elicitation(params) {
+      captured = params;
+      return { action: "accept", content: { proceed: true } };
+    },
+  };
+  await phaseApprovalGate({
+    results: [
+      { agent: "alpha", status: "ok", preview: "fine" },
+      { agent: "beta", preview: "no status reported" },
+    ],
+    ui,
+    capabilities: INTERACTIVE,
+  });
+  assert.match(captured.message, /1 ok \/ 0 failed \/ 1 unknown of 2/);
 });

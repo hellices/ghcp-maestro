@@ -126,9 +126,13 @@ export async function phaseApprovalGate(opts = {}) {
     return { approved: true, reason: "non-interactive" };
   }
 
+  // A missing status is "unknown", not failed — callers may omit it. One
+  // summary string serves both the log line and the dialog message.
   const okCount = results.filter((r) => r?.status === "ok").length;
-  const failedCount = results.length - okCount;
-  await note(`phase gate: ${phase} complete — ${okCount} ok / ${failedCount} failed — review before ${next}:`);
+  const unknownCount = results.filter((r) => r?.status == null).length;
+  const failedCount = results.length - okCount - unknownCount;
+  const summary = `${okCount} ok / ${failedCount} failed${unknownCount > 0 ? ` / ${unknownCount} unknown` : ""} of ${results.length}`;
+  await note(`phase gate: ${phase} complete — ${summary} — review before ${next}:`);
   for (const r of results) {
     await note(`  • ${r.agent} [${r.status ?? "unknown"}]: ${promptPreview(r.preview)}`);
   }
@@ -136,7 +140,7 @@ export async function phaseApprovalGate(opts = {}) {
   let result;
   try {
     result = await ui.elicitation({
-      message: `${capitalize(phase)} phase complete: ${okCount} ok / ${failedCount} failed of ${results.length}. Continue to ${next}? (Decline to stop — the run stays resumable.)`,
+      message: `${capitalize(phase)} phase complete: ${summary}. Continue to ${next}? (Decline to stop — the run stays resumable.)`,
       requestedSchema: {
         type: "object",
         properties: {
