@@ -107,7 +107,7 @@ it as its own command (e.g. a deep code review you run on every branch):
 | `/maestro install <source> [--force]` | Install a saved workflow from GitHub into your user dir |
 | `/maestros [runId]` | List recent runs, or show one run's live dashboard |
 | `/maestro-resume <runId>` | Resume a run; cached agents are skipped |
-| `/maestro-stop <runId>` | Stop a run and abort its in-flight agents |
+| `/maestro-stop <runId>` | Stop a run (aborts in-flight agents when run from the owning session) |
 | `/maestro help` | List every subcommand |
 
 ---
