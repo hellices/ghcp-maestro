@@ -36,8 +36,10 @@ that remains acts as the trigger and steer; the spec drives correctness.
 
 Rules and limits:
 
-- Up to 4 files per run; each file is capped at 16 000 characters (longer
-  files are truncated with an explicit marker), 48 000 characters combined.
+- Up to 4 files per run; each file is capped at 16 000 characters of content
+  (longer files are truncated and a short truncation marker is appended).
+  The combined limit is 48 000 characters *including* those markers, so
+  several truncated files can trip it slightly earlier than 3 × 16 000.
 - A missing or unreadable file aborts immediately — before any agent spends
   a token.
 - `/maestro brainstorm` accepts `@file` references the same way.
