@@ -304,8 +304,9 @@ export function createBuiltinWorkflows(deps) {
    * subagent that already succeeded is replayed from cache on /maestro-resume.
    */
   async function runTaskWorkflow(session, rawTask, opts = {}) {
-    // Write mode (#40): strictly opt-in via --write on the task line. The
-    // manifest keeps the RAW line, so resume replays the same flags.
+    // Write mode (#40): strictly opt-in — via --write on the task line or the
+    // opts.write escape hatch (used by other surfaces/tests). The manifest
+    // keeps the RAW line, so resume replays the same flags.
     const flags = parseWriteFlags(rawTask);
     const writeMode = flags.write || opts.write === true;
     const gitExec = opts.gitExec; // injectable for tests; undefined = real git
