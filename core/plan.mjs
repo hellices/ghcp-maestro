@@ -31,6 +31,8 @@ export const MAX_AGENT_ID_LEN = 40;
  * @param {string} [refsBlock] - optional reference-material block (from
  *   `buildFileRefsBlock`) inserted right after the task line so the planner
  *   decomposes against the full spec, not just the one-line trigger.
+ * @param {boolean} [writeMode] - write mode (#40): the schema requires a
+ *   per-subtask `files` scope and the rules demand disjoint scopes.
  * @returns {string}
  */
 export function buildPlanPrompt(task, parserError, previousReply, refsBlock, writeMode) {
@@ -84,7 +86,7 @@ export function buildPlanPrompt(task, parserError, previousReply, refsBlock, wri
  * @param {string} text
  * @param {{ requireFiles?: boolean }} [opts] — requireFiles: every entry must
  *   declare a non-empty `files` scope array (write mode, #40)
- * @returns {{ agent: string, prompt: string }[]}
+ * @returns {{ agent: string, prompt: string, files?: string[], dependsOn?: string[] }[]}
  */
 export function parseAndValidatePlan(text, opts = {}) {
   if (!text) throw new Error("empty plan response");

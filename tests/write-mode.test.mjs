@@ -236,6 +236,7 @@ test("buildWritePrompt pins the agent to its worktree, branch, and scope", () =>
 test("integrateBranches merges sequentially and runs the check after each merge", async () => {
   const order = [];
   const exec = async (args) => {
+    if (args[0] === "rev-parse") return { stdout: "main\n", stderr: "" };
     order.push(`git:${args[0] === "merge" ? args[2] : args[0]}`);
     return { stdout: "", stderr: "" };
   };
@@ -264,6 +265,7 @@ test("integrateBranches aborts the conflicted merge and reports the remainder", 
   const calls = [];
   const exec = async (args) => {
     calls.push(args.join(" "));
+    if (args[0] === "rev-parse") return { stdout: "main\n", stderr: "" };
     if (args[0] === "merge" && args.includes("maestro/r/b")) {
       throw new Error("CONFLICT (content): Merge conflict in src/shared.mjs");
     }
@@ -287,7 +289,8 @@ test("integrateBranches aborts the conflicted merge and reports the remainder", 
 });
 
 test("integrateBranches stops when the check command fails, keeping the merge visible", async () => {
-  const exec = async () => ({ stdout: "", stderr: "" });
+  const exec = async (args) =>
+    args[0] === "rev-parse" ? { stdout: "main\n", stderr: "" } : { stdout: "", stderr: "" };
   const result = await integrateBranches(
     [
       { agent: "a", branch: "maestro/r/a" },
@@ -364,4 +367,41 @@ test("createWorktrees rolls back already-created worktrees when a later add fail
   // The api worktree and its fresh branch were rolled back best-effort.
   assert.ok(calls.includes(`worktree remove ${join("/r", "api")}`));
   assert.ok(calls.includes("branch -D maestro/run1/api"));
+});
+
+test("integrateBranches refuses to merge when HEAD moved off the target branch", async () => {
+  const exec = async (args) =>
+    args[0] === "rev-parse"
+      ? { stdout: "feature/elsewhere\n", stderr: "" }
+      : { stdout: "", stderr: "" };
+  await assert.rejects(
+    () => integrateBranches([{ agent: "a", branch: "maestro/r/a" }], { exec, targetBranch: "main" }),
+    /expected branch "main" but HEAD is on "feature\/elsewhere"/,
+  );
+});
+
+test("createWorktrees rollback keeps resume branches, deletes only fresh ones", async () => {
+  const calls = [];
+  const exec = async (args) => {
+    calls.push(args.join(" "));
+    // First agent: branch survives from a previous attempt (resume path).
+    if (args.includes("-b") && args.some((a) => a.endsWith("/api"))) {
+      throw new Error("fatal: a branch named 'maestro/run1/api' already exists");
+    }
+    // Second agent: fresh branch is fine, but the third add blows up.
+    if (args[1] === "add" && args[2].endsWith("boom")) throw new Error("fatal: disk full");
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    () =>
+      createWorktrees([{ agent: "api" }, { agent: "ui" }, { agent: "boom" }], {
+        exec,
+        root: "/r",
+        runId: "run1",
+      }),
+    /disk full/,
+  );
+  // Fresh ui branch rolled back; resume api branch survives.
+  assert.ok(calls.includes("branch -D maestro/run1/ui"));
+  assert.ok(!calls.includes("branch -D maestro/run1/api"));
 });
