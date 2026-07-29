@@ -993,7 +993,7 @@ test("task --write stops integration on merge conflict with an actionable report
     // The conflicted merge was aborted so the tree is usable.
     assert.ok(gitExec.calls.some((c) => c.args.join(" ") === "merge --abort"));
     // Actionable report: conflict was aborted (branch unmerged), remainder listed.
-    assert.ok(session.logs.some((l) => /was not merged \(conflict aborted\)/.test(l)));
+    assert.ok(session.logs.some((l) => /was not merged \(the merge was rolled back\)/.test(l)));
     assert.ok(session.logs.some((l) => /Remaining unmerged: maestro\/.*\/docs/.test(l)));
   });
 });

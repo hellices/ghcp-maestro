@@ -718,11 +718,12 @@ export function createBuiltinWorkflows(deps) {
       });
       if (integration.failed) {
         // A check failure leaves the merge applied on the target branch (so
-        // the failing state is inspectable); a conflict is aborted, leaving
-        // the branch fully unmerged. Word the report accordingly.
+        // the failing state is inspectable); a failed merge is rolled back,
+        // leaving the branch fully unmerged. Word the report accordingly —
+        // the detailed reason above carries git's own output.
         const failedNote = integration.failed.applied
           ? `The failing merge of ${integration.failed.branch} is still applied on ${targetBranch} — inspect or revert it.`
-          : `${integration.failed.branch} was not merged (conflict aborted) — resolve manually.`;
+          : `${integration.failed.branch} was not merged (the merge was rolled back) — resolve manually.`;
         const remainingNote =
           integration.remaining.length > 0
             ? ` Remaining unmerged: ${integration.remaining.join(", ")}.`
