@@ -174,7 +174,12 @@ function normalizeScopePath(rawPath) {
 }
 
 function scopesOverlap(a, b) {
-  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+  // Case-insensitive comparison — on the default Windows/macOS filesystems
+  // "src/api" and "SRC/api" are the same directory, so treating them as
+  // disjoint would break isolation. Conservative rejection is safer.
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  return x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`);
 }
 
 /**

@@ -169,6 +169,17 @@ test("validateDisjointScopes rejects absolute and escaping paths", () => {
   );
 });
 
+test("validateDisjointScopes compares scopes case-insensitively", () => {
+  assert.throws(
+    () =>
+      validateDisjointScopes([
+        { agent: "a", files: ["src/api"] },
+        { agent: "b", files: ["SRC/API/handler.mjs"] },
+      ]),
+    /overlapping file scopes/,
+  );
+});
+
 test("validateDisjointScopes catches overlap hidden by path variants (//, ./)", () => {
   assert.throws(
     () =>

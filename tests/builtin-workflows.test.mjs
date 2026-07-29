@@ -1118,3 +1118,29 @@ test("task --write rejects agent ids that collide after sanitization (#40)", asy
     assert.ok(session.logs.some((l) => /collide after sanitization/.test(l)));
   });
 });
+
+test("task --write rejects agent ids that collide only by case (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const adapter = {
+      name: "case-collide",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              // Same directory on case-insensitive filesystems.
+              { agent: "API", prompt: "p1", files: ["src/a"] },
+              { agent: "api", prompt: "p2", files: ["src/b"] },
+              { agent: "docs", prompt: "p3", files: ["docs"] },
+            ]),
+          };
+        }
+        return { text: "x" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "--write migrate", { gitExec: fakeGitExec() });
+    assert.equal(run.manifest.status, "error");
+    assert.ok(session.logs.some((l) => /collide after sanitization/.test(l)));
+  });
+});
