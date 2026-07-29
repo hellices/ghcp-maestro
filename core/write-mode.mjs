@@ -55,7 +55,14 @@ export function execGit(args, opts = {}) {
       { cwd: opts.cwd, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
-          reject(new Error(`git ${args.join(" ")} failed: ${stderr?.trim() || err.message}`));
+          // git often puts the actionable detail on stdout (e.g. merge
+          // conflict file lists) — fall back to it when stderr is empty,
+          // bounded so a huge dump can't blow up the log payload.
+          const detail = (stderr?.trim() || String(stdout ?? "").trim() || err.message).slice(
+            0,
+            2000,
+          );
+          reject(new Error(`git ${args.join(" ")} failed: ${detail}`));
         } else {
           resolvePromise({ stdout: String(stdout), stderr: String(stderr) });
         }
