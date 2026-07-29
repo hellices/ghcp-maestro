@@ -22,6 +22,8 @@ import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, a
 import { parseFileRefs, loadFileRefs, buildFileRefsBlock } from "./task-inputs.mjs";
 import {
   parseWriteFlags,
+  WRITE_FLAG,
+  ALLOW_DIRTY_FLAG,
   assertWritableRepo,
   validateDisjointScopes,
   createWorktrees,
@@ -313,8 +315,7 @@ export function createBuiltinWorkflows(deps) {
     // opts.write escape hatch (used by other surfaces/tests). The manifest
     // keeps the RAW line, so resume replays the same flags.
     const flags = parseWriteFlags(rawTask);
-    const writeMode = flags.write || opts.write === true;
-    const gitExec = opts.gitExec; // injectable for tests; undefined = real git
+    const writeMode = flags.write || opts.write === true;    const gitExec = opts.gitExec; // injectable for tests; undefined = real git
     let targetBranch;
     if (writeMode) {
       try {
@@ -337,7 +338,19 @@ export function createBuiltinWorkflows(deps) {
     const inputs = await resolveTaskInputs(session, writeMode ? flags.task : rawTask, opts);
     if (!inputs) return null;
     const { task, refsBlock } = inputs;
-    const run = opts.run ?? (await createRun({ workflow: "task", args: { task: rawTask } }));
+    // The manifest line must carry the EFFECTIVE flags — write mode enabled
+    // via opts.write alone would otherwise be silently off on /maestro-resume
+    // (resume replays only the manifest's raw line).
+    const manifestTask = writeMode
+      ? [
+          WRITE_FLAG,
+          flags.allowDirty || opts.allowDirty === true ? ALLOW_DIRTY_FLAG : null,
+          flags.task,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : rawTask;
+    const run = opts.run ?? (await createRun({ workflow: "task", args: { task: manifestTask } }));
     const runId = run.runId;
     const adapter = getAdapter();
     // Per-run token budget (#14): accumulates per-turn usage across ALL phases;

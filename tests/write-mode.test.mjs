@@ -154,7 +154,7 @@ test("validateDisjointScopes does not confuse sibling prefixes (src vs src-extra
   ]);
 });
 
-test("validateDisjointScopes allows one agent to own multiple non-conflicting paths", () => {
+test("validateDisjointScopes exempts overlap within a single agent's own scope", () => {
   validateDisjointScopes([{ agent: "a", files: ["src", "src/deep.mjs"] }, { agent: "b", files: ["docs"] }]);
 });
 
