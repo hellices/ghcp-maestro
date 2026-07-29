@@ -1231,7 +1231,7 @@ test("task --write uses normalized scopes in child prompts, not raw plan strings
     const run = await runTaskWorkflow(session, "--write migrate", { gitExec: fakeGitExec() });
     assert.equal(run.manifest.status, "complete");
     const apiPrompt = Object.entries(prompts).find(([k]) => k.includes("-api"))?.[1];
-    assert.match(apiPrompt, /Modify ONLY files under: src\/api\/v2\b/);
+    assert.match(apiPrompt, /Modify ONLY files under: `src\/api\/v2`/);
     assert.ok(!apiPrompt.includes("src//api"));
   });
 });
