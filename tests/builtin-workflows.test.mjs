@@ -716,3 +716,121 @@ test("task workflow logs a coverage line and feeds failures to synth", async () 
     assert.match(synthPrompt, /state explicitly which angles are missing/);
   });
 });
+
+test("task workflow inlines @file refs into plan and explore prompts (#39)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const adapter = {
+      name: "capture",
+      async invoke(spec) {
+        prompts[spec.id] = spec.prompt;
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "@spec.md do the thing", {
+      cwd: "/proj",
+      readFile: async (abs) => {
+        if (abs === "/proj/spec.md") return "THE SPEC BODY";
+        throw new Error("unexpected path " + abs);
+      },
+    });
+    assert.equal(run.manifest.status, "complete");
+    // Raw line (with the @ref) persists in the manifest for resume fidelity.
+    assert.equal(run.manifest.args.task, "@spec.md do the thing");
+    // Plan prompt: cleaned task + fenced spec content.
+    assert.match(prompts.plan, /Task: do the thing/);
+    assert.match(prompts.plan, /--- file: spec\.md ---\nTHE SPEC BODY/);
+    // Every explore prompt carries the spec block too.
+    for (const id of Object.keys(prompts).filter((k) => k.startsWith("explore-"))) {
+      assert.match(prompts[id], /THE SPEC BODY/);
+    }
+    assert.ok(session.logs.some((l) => /inlined 1 @file reference\(s\)/.test(l)));
+  });
+});
+
+test("task workflow aborts before any run exists when an @file is unreadable (#39)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let invoked = 0;
+    const adapter = {
+      name: "never",
+      async invoke() {
+        invoked += 1;
+        return { text: "x" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "@missing.md do the thing", {
+      cwd: "/proj",
+      readFile: async () => {
+        throw new Error("ENOENT");
+      },
+    });
+    assert.equal(run, null);
+    assert.equal(invoked, 0);
+    assert.ok(session.logs.some((l) => /cannot read @missing\.md/.test(l)));
+  });
+});
+
+test("task workflow without @refs keeps prompts byte-identical (#39)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let planPrompt;
+    const adapter = {
+      name: "capture",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          planPrompt = spec.prompt;
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(planPrompt.endsWith("Task: do the thing"));
+    assert.ok(!planPrompt.includes("Reference material"));
+  });
+});
+
+test("brainstorm workflow inlines @file refs into lens prompts (#39)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const adapter = {
+      name: "capture",
+      async invoke(spec) {
+        prompts[spec.id] = spec.prompt;
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runBrainstormWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runBrainstormWorkflow(session, "@notes.md future of the plugin", {
+      cwd: "/proj",
+      readFile: async () => "NOTES CONTENT",
+    });
+    assert.equal(run.manifest.status, "complete");
+    assert.equal(run.manifest.args.topic, "@notes.md future of the plugin");
+    for (const lens of ["tech", "ux", "biz", "risk"]) {
+      assert.match(prompts[`explore-${lens}`], /Topic: future of the plugin/);
+      assert.match(prompts[`explore-${lens}`], /NOTES CONTENT/);
+    }
+  });
+});

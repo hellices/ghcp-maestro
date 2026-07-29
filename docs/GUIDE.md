@@ -18,6 +18,33 @@ Plans may declare `dependsOn` between subtasks: dependents run in a later
 wave with their dependencies' outputs injected into the prompt, and if a
 dependency fails its dependents are skipped instead of running blind.
 
+### `@file` references — drive a run from a markdown spec
+
+For anything too detailed to fit one chat line, write the request as a
+markdown file and reference it with `@`:
+
+```text
+/maestro task @docs/refactor-spec.md focus on the API layer first
+```
+
+The host reads each `@path` (relative to the current directory) **before the
+run starts** and inlines the content — fenced, with the filename — into the
+plan prompt and every subtask prompt. Each isolated child session therefore
+sees the full spec without having to rediscover the file. The one-line text
+that remains acts as the trigger and steer; the spec drives correctness.
+
+Rules and limits:
+
+- Up to 4 files per run; each file is capped at 16 000 characters (longer
+  files are truncated with an explicit marker), 48 000 characters combined.
+- A missing or unreadable file aborts immediately — before any agent spends
+  a token.
+- `/maestro brainstorm` accepts `@file` references the same way.
+- The run manifest keeps the raw line, so `/maestro-resume` re-reads the same
+  files (and fails cleanly if a spec file has since disappeared).
+- Remember every subtask prompt carries the spec: a big spec × a wide fan-out
+  multiplies token cost. The gate's run-size estimate reflects prompt sizes.
+
 ### Real parallel fan-out with isolation
 
 Each subtask runs in its own child Copilot session, concurrently (default 16 at

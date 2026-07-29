@@ -69,6 +69,12 @@ copilot --experimental
 /maestro brainstorm 안정성을 해치지 않으면서 클라우드 비용을 줄이는 방법
 ```
 
+**스펙 파일 기반 상세 요청** — 한 줄로 부족하면 요청을 마크다운으로 쓰고 `@`
+로 참조; 스펙이 계획과 모든 서브태스크에 인라인된다.
+```text
+/maestro task @docs/refactor-spec.md API 레이어부터 우선 진행
+```
+
 **반복 워크플로우** — 검증된 절차를 스크립트로 저장해 자체 명령으로 재실행,
 또는 외부 워크플로우를 GitHub 에서 직접 설치:
 ```text
@@ -98,6 +104,8 @@ copilot --experimental
 
 - **작업 자동 분할** — `plan` 에이전트가 3–6 개 서브태스크로 분할, 서브태스크
   간 `dependsOn` 웨이브 지원.
+- **`@file` 참조** — `/maestro task @docs/spec.md …` 로 마크다운 스펙을 계획과
+  모든 서브태스크 프롬프트에 인라인.
 - **격리된 실제 병렬 fan-out** — 서브태스크별 전용 child Copilot 세션과
   독립 컨텍스트 창; 전체 소요 시간 ≈ 최장 서브태스크.
 - **사전 승인 게이트** — 고비용 fan-out 실행 전 계획 검토 · 부분 선택 · 취소.
