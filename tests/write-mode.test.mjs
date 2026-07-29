@@ -383,7 +383,7 @@ test("buildWritePrompt pins the agent to its worktree, branch, and scope", () =>
   assert.match(prompt, /WRITE MODE/);
   assert.match(prompt, /\/data\/wt\/api/);
   assert.match(prompt, /maestro\/r1\/api/);
-  assert.match(prompt, /src\/api, tests\/api\.test\.mjs/);
+  assert.match(prompt, /`src\/api`, `tests\/api\.test\.mjs`/);
   assert.match(prompt, /git add \+ git commit/);
   assert.ok(prompt.endsWith("Migrate the API layer."));
 });

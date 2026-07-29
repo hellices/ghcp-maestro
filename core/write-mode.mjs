@@ -317,7 +317,7 @@ export function buildWritePrompt(prompt, worktree) {
     "WRITE MODE — working contract (violating it corrupts parallel work):",
     `- Do ALL work inside this directory and nowhere else: ${worktree.dir}`,
     `- You are on git branch ${worktree.branch}; do not switch branches.`,
-    `- Modify ONLY files under: ${worktree.files.join(", ")}`,
+    `- Modify ONLY files under: ${worktree.files.map((f) => `\`${f}\``).join(", ")}`,
     "- When done, stage and commit every change (git add + git commit) with a concise message. Only committed work is integrated — uncommitted changes are left behind in the worktree and never merged.",
     "",
     prompt,
