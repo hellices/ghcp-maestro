@@ -32,7 +32,7 @@ import {
   cleanupWorktrees,
   makeCheckRunner,
 } from "./write-mode.mjs";
-import { planApprovalGate } from "./plan-approval.mjs";
+import { planApprovalGate, phaseApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { envModelRoutes, resolveModel } from "./model-routes.mjs";
 import { buildSynthPrompt, buildVerifyPrompt } from "./synth.mjs";
@@ -682,6 +682,57 @@ export function createBuiltinWorkflows(deps) {
         `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed${hint}`,
         tokensPatch(),
       );
+    }
+
+    // Mid-run steering (#15): opt-in pause after the fan-out, before the next
+    // spend (write-mode integration / verify / synth). Placed before
+    // integration deliberately — in write mode the user can inspect agent
+    // outputs and stop BEFORE anything is merged. Declining stops the run
+    // (resumable: cached ok agents replay, and resume auto-approves the gate).
+    const phaseGateEnabled = opts.phaseGate === true || isTruthyEnv(env.GHCP_MAESTRO_PHASE_GATE);
+    // With the budget already blown, verify/synth won't run regardless of the
+    // answer — asking "continue?" and then soft-stopping anyway would mislead.
+    // Skip the dialog and let the budget stop speak. Write mode still gates:
+    // integration is a real next step that runs even over budget.
+    const gateMootOverBudget = budget.exceeded() && !writeMode;
+    if (phaseGateEnabled && gateMootOverBudget) {
+      await session.log(
+        `ghcp-maestro/${runId}: phase gate skipped — token budget already exceeded, the run will soft-stop`,
+      );
+    }
+    if (phaseGateEnabled && !gateMootOverBudget) {
+      const nextPhase = writeMode
+        ? "integrate"
+        : opts.verify === true || isTruthyEnv(env.GHCP_MAESTRO_VERIFY)
+          ? "verify"
+          : "synth";
+      const midGate = await phaseApprovalGate({
+        phase: "explore",
+        next: nextPhase,
+        results: exploreResults.map((r) => ({
+          agent: r.spec.agent,
+          status: r.status,
+          preview: r.status === "ok" ? (r.output?.text ?? "") : (r.error ?? ""),
+        })),
+        ui: gateUi,
+        capabilities: session.capabilities,
+        autoApprove,
+        log: (msg, options) => session.log(`ghcp-maestro/${runId}: ${msg}`, options),
+      });
+      if (!midGate.approved) {
+        releaseRun(runId);
+        await run.patchManifest({
+          status: "stopped",
+          finishedAt: Date.now(),
+          ...tokensPatch(),
+        });
+        await writeRunTrace(run);
+        await session.log(
+          `ghcp-maestro/${runId}: phase gate: stopped after explore (${midGate.reason})${writeMode ? " — nothing was merged; agent branches and worktrees are kept" : ""} — inspect the outputs above and finish later with /maestro-resume ${runId}`,
+          { level: "warning" },
+        );
+        return run;
+      }
     }
 
     // Write mode (#40): sequential integration — merge each ok agent's branch

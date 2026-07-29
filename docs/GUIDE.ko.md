@@ -93,6 +93,17 @@ ghcp-maestro 가 하는 일과 모든 설정을 다루는 상세 문서.
 보여준다. 비싼 병렬 작업이 시작되기 전에 전체 승인 · 일부만 선택 · 취소 를
 고를 수 있다.
 
+### 실행 중간 phase 게이트 (opt-in)
+
+`GHCP_MAESTRO_PHASE_GATE=1` 을 설정하면 fan-out 완료 후 — 다음 지출(쓰기 모드
+통합 · verify · synth) 전에 — 한 번 더 멈춘다. 에이전트별 상태와 출력
+미리보기를 보여주고 계속할지 묻는다. 거절해도 잃는 것은 없다: 완료된 출력은
+캐시되어 있고 `/maestro-resume` 이 그대로 재생해 run 을 마무리한다(재개 시
+게이트는 자동 승인). 쓰기 모드에서는 게이트가 브랜치 머지 **이전** 에 있어,
+에이전트 결과를 검토하고 저장소를 건드리지 않은 채 멈출 수 있다. 기본은 꺼짐;
+elicitation 을 지원하는 환경에서만 대화가 뜨고, 비대화형 환경은 자동으로
+계속한다.
+
 ### 비용 가시성과 토큰 예산
 
 fan-out 전 게이트에 실행 규모 추정이 표시되고, 하위 작업이
@@ -197,6 +208,7 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 | 변수 | 기본값 | 역할 |
 | :-- | :-- | :-- |
 | `GHCP_MAESTRO_AUTO_APPROVE` | 꺼짐 | 계획 승인 게이트 생략; 항상 모든 하위 작업 실행 |
+| `GHCP_MAESTRO_PHASE_GATE` | 꺼짐 | fan-out 완료 후(통합/verify/synth 전) 멈춰 에이전트 출력 검토 |
 | `GHCP_MAESTRO_BUDGET_TOKENS` | 무제한 | run 시도당 토큰 상한 (`500k` / `2m` 축약); 도달 시 soft-stop |
 | `GHCP_MAESTRO_MODEL_ROUTES` | 없음 | 에이전트 라벨 → 모델 JSON 맵 (`plan`, `explore:<agent>`, `verify`, `synth`; `*` 와일드카드) |
 | `GHCP_MAESTRO_VERIFY` | 꺼짐 | fan-out 과 종합 사이에 검증 단계 삽입 (run 당 에이전트 1개 추가) |

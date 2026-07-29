@@ -7,6 +7,15 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **Mid-run phase gate (opt-in).** `GHCP_MAESTRO_PHASE_GATE=1` pauses the
+  task workflow a second time after the fan-out completes — before the next
+  spend (write-mode integration / verify / synth) — showing a per-agent
+  digest (status + output preview) and asking whether to continue. Declining
+  stops the run resumably: cached agent outputs replay on `/maestro-resume`,
+  which auto-approves both gates. In write mode the gate sits before any
+  branch is merged, so a stop leaves the repository untouched. New
+  `phaseApprovalGate` in `core/plan-approval.mjs`, same fail-closed safety
+  envelope as the pre-fan-out gate. (#15)
 - **`fixLoop` explicit convergence criteria.** `core/quality.mjs`: `fixLoop`
   now accepts an `until(iteration, check) -> { done, evidence }` predicate —
   an externally checkable stop condition that overrides the check's own `ok`
