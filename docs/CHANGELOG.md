@@ -6,6 +6,17 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+### Added
+- **`@file` references in `/maestro task` and `/maestro brainstorm`.** New
+  `core/task-inputs.mjs`: `@<path>` tokens in the task line are resolved
+  against the cwd **before the run exists** (a bad path costs zero tokens),
+  and the file content is inlined — fenced, with the filename — into the plan
+  prompt and every explore prompt, so isolated child sessions see the full
+  spec without rediscovering it. Caps: 4 files, 16k chars/file (truncated
+  with a marker), 48k combined. The manifest keeps the raw line, so resume
+  re-reads the same files. Lines without `@refs` produce byte-identical
+  prompts to before. (#39)
+
 ## [0.7.0] - 2026-07-29
 
 ### Added

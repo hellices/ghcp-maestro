@@ -77,6 +77,13 @@ at once.
 /maestro brainstorm Ways to cut our cloud bill without hurting reliability
 ```
 
+**Detailed requests from a spec file** — when one line isn't enough, write the
+request as markdown and reference it with `@`; the spec is inlined into the
+plan and every subtask.
+```text
+/maestro task @docs/refactor-spec.md focus on the API layer first
+```
+
 **Repeatable workflows** — once a procedure works, save it as a script and rerun
 it as its own command, or install someone else's straight from GitHub:
 ```text
@@ -106,6 +113,8 @@ it as its own command, or install someone else's straight from GitHub:
 
 - **Automatic task decomposition** — a `plan` agent splits the task into 3–6
   subtasks, with optional `dependsOn` waves between them.
+- **`@file` references** — `/maestro task @docs/spec.md …` inlines a markdown
+  spec into the plan and every subtask prompt.
 - **Real parallel fan-out with isolation** — every subtask gets its own child
   Copilot session and a fresh context window; wall-clock ≈ slowest subtask.
 - **Pre-approval gate** — review the plan, run a subset, or abort before any

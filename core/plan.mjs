@@ -28,9 +28,12 @@ export const MAX_AGENT_ID_LEN = 40;
  * @param {string} task
  * @param {string} [parserError]
  * @param {string} [previousReply]
+ * @param {string} [refsBlock] - optional reference-material block (from
+ *   `buildFileRefsBlock`) inserted right after the task line so the planner
+ *   decomposes against the full spec, not just the one-line trigger.
  * @returns {string}
  */
-export function buildPlanPrompt(task, parserError, previousReply) {
+export function buildPlanPrompt(task, parserError, previousReply, refsBlock) {
   const lines = [
     "You are a planning agent for a dynamic multi-agent workflow runtime.",
     "Decompose the following task into 3 to 6 subtasks that run in parallel. Subtasks are INDEPENDENT by default and must not assume they can see each other's output.",
@@ -49,6 +52,9 @@ export function buildPlanPrompt(task, parserError, previousReply) {
     "",
     `Task: ${task}`,
   ];
+  if (refsBlock) {
+    lines.push(refsBlock);
+  }
   if (parserError) {
     lines.push(
       "",
