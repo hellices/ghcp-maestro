@@ -537,8 +537,16 @@ export function createBuiltinWorkflows(deps) {
       for (const [i, wt] of worktrees.entries()) {
         worktreeByAgent.set(specs[i].agent, { ...wt, files: specs[i].files ?? [] });
       }
+      // Cap the enumeration — at large fan-outs a full branch list would blow
+      // up the JSON-RPC log payload. Names follow maestro/<runId>/<agent>
+      // anyway, so the head + count is enough to locate them.
+      const branchPreview = worktrees
+        .slice(0, 8)
+        .map((w) => w.branch)
+        .join(", ");
+      const branchSuffix = worktrees.length > 8 ? `, … +${worktrees.length - 8} more` : "";
       await session.log(
-        `ghcp-maestro/${runId}: created ${worktrees.length} worktree(s) under ${worktreeRoot} (branches: ${worktrees.map((w) => w.branch).join(", ")})`,
+        `ghcp-maestro/${runId}: created ${worktrees.length} worktree(s) under ${worktreeRoot} (branches: ${branchPreview}${branchSuffix})`,
       );
     }
 
