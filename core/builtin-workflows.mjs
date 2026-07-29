@@ -660,9 +660,13 @@ export function createBuiltinWorkflows(deps) {
     // conflicts git can't detect). A conflict or check failure stops
     // integration with the remaining branches left for manual resolution.
     if (writeMode) {
-      const okBranches = specs
-        .filter((s) => resultByAgent.get(s.agent)?.status === "ok")
-        .map((s) => ({ agent: s.agent, branch: worktreeByAgent.get(s.agent).branch }));
+      // Merge in topological order — dependencies land on the target branch
+      // before their dependents, mirroring the explore layers.
+      const okBranches = layers
+        .flat()
+        .map((s) => s.agent)
+        .filter((agent) => resultByAgent.get(agent)?.status === "ok")
+        .map((agent) => ({ agent, branch: worktreeByAgent.get(agent).branch }));
       const checkCmd = opts.checkCmd ?? (env.GHCP_MAESTRO_CHECK_CMD || undefined);
       const runCheck =
         opts.runCheck ?? (checkCmd ? makeCheckRunner(checkCmd, opts.cwd) : undefined);

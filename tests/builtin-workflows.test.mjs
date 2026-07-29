@@ -945,6 +945,42 @@ test("task --write runs end-to-end: worktrees, pinned prompts, sequential integr
   });
 });
 
+test("task --write merges branches in topological order, not plan order (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const gitExec = fakeGitExec();
+    const adapter = {
+      name: "dag-write",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              // Plan lists the dependent first — integration must still merge
+              // the dependency's branch first.
+              { agent: "app", prompt: "build app", files: ["src/app"], dependsOn: ["lib"] },
+              { agent: "lib", prompt: "build lib", files: ["src/lib"] },
+              { agent: "docs", prompt: "update docs", files: ["docs"] },
+            ]),
+          };
+        }
+        return { text: `done-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "--write build it", { gitExec });
+    assert.equal(run.manifest.status, "complete");
+    const mergedBranches = gitExec.calls
+      .filter((c) => c.args[0] === "merge" && c.args.includes("--no-ff"))
+      .map((c) => c.args.at(-1));
+    // lib and docs are layer 0 (dependency-free), app merges last.
+    assert.deepEqual(mergedBranches, [
+      `maestro/${run.runId}/lib`,
+      `maestro/${run.runId}/docs`,
+      `maestro/${run.runId}/app`,
+    ]);
+  });
+});
+
 test("task --write refuses a dirty repo without --allow-dirty (#40)", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();

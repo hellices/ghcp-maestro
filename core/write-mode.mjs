@@ -374,10 +374,10 @@ export async function cleanupWorktrees(worktrees, opts = {}) {
       const { stdout } = await exec(["-C", wt.dir, "status", "--porcelain"], { cwd: opts.cwd });
       dirty = stdout.trim() !== "";
     } catch (err) {
-      // Only a missing directory means "nothing to remove" — any other status
-      // failure (permissions, git broken) must be surfaced, not swallowed.
+      // Only a genuinely missing directory means "nothing to remove" — any
+      // other status failure (permissions, git broken) must be surfaced.
       const msg = String(err?.message ?? err);
-      if (/cannot change to|no such file or directory|enoent/i.test(msg)) continue;
+      if (/no such file or directory|enoent/i.test(msg)) continue;
       kept.push({ agent: wt.agent, dir: wt.dir, reason: `status failed: ${msg}` });
       continue;
     }

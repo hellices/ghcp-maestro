@@ -442,6 +442,16 @@ test("cleanupWorktrees keeps and reports worktrees whose status check fails for 
   assert.match(result.kept[0].reason, /status failed: .*Permission denied/);
 });
 
+test("cleanupWorktrees does not mistake a permission-denied chdir for a missing directory", async () => {
+  const exec = async (args) => {
+    if (args[0] === "-C") throw new Error("fatal: cannot change to '/wt/locked': Permission denied");
+    return { stdout: "", stderr: "" };
+  };
+  const result = await cleanupWorktrees([{ agent: "locked", dir: "/wt/locked" }], { exec });
+  assert.equal(result.kept.length, 1);
+  assert.match(result.kept[0].reason, /Permission denied/);
+});
+
 test("createWorktrees rolls back already-created worktrees when a later add fails", async () => {
   const calls = [];
   const exec = async (args) => {
