@@ -412,6 +412,92 @@ test("task workflow reports and persists token usage even without a budget", asy
   });
 });
 
+test("task workflow soft-stops (not errors) when the verify agent blows the budget", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const invoked = [];
+    // 1000 tokens/agent, 4500 budget: plan + 3 explore = 4000 (under the cap),
+    // verify pushes it to 5000 — the run must soft-stop before synth instead of
+    // failing with "synth skipped".
+    const adapter = {
+      name: "tokens",
+      async invoke(spec, ctx) {
+        invoked.push(spec.agent);
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", {
+      budgetTokens: 4500,
+      verify: true,
+    });
+    assert.equal(run.manifest.status, "stopped");
+    assert.ok(invoked.includes("verify"), "verify runs while the budget still has headroom");
+    assert.ok(!invoked.includes("synth"), "synth must not run after verify blows the budget");
+    assert.equal(run.manifest.tokensUsed, 5000);
+    assert.ok(session.logs.some((l) => /budget/.test(l) && /stopped before synth/.test(l)));
+    assert.ok(session.logs.some((l) => /maestro-resume/.test(l)));
+  });
+});
+
+test("task workflow keeps tokensUsed cumulative across a budget soft-stop resume", async () => {
+  await withTempDataDir(async () => {
+    const makeAdapter = (invoked) => ({
+      name: "tokens",
+      async invoke(spec, ctx) {
+        invoked.push(spec.agent);
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    });
+    const firstInvoked = [];
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => makeAdapter(firstInvoked),
+    });
+    const run = await runTaskWorkflow(fakeSession(), "do the thing", { budgetTokens: 1500 });
+    assert.equal(run.manifest.status, "stopped");
+    const firstTokens = run.manifest.tokensUsed;
+    assert.ok(firstTokens > 0, "the soft-stopped run persists its spend");
+
+    // Resume with an ample budget: cached ok agents replay for free, only the
+    // remaining agents spend tokens — and the persisted total must be the sum
+    // of both attempts, not just the resume delta.
+    const secondInvoked = [];
+    const { runTaskWorkflow: resumeTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => makeAdapter(secondInvoked),
+    });
+    const resumed = await resumeTaskWorkflow(fakeSession(), "do the thing", {
+      run,
+      budgetTokens: 999999,
+    });
+    assert.equal(resumed.manifest.status, "complete");
+    assert.equal(resumed.manifest.tokensUsed, firstTokens + secondInvoked.length * 1000);
+    assert.ok(
+      resumed.manifest.tokensUsed > firstTokens,
+      "resume must add to the prior spend, not clobber it",
+    );
+  });
+});
+
 // --- DAG plans (#21) ---------------------------------------------------------
 
 test("task workflow runs dependsOn subtasks in layers with augmented prompts", async () => {

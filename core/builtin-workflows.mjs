@@ -253,6 +253,14 @@ export function createBuiltinWorkflows(deps) {
     // Per-run token budget (#14): accumulates per-turn usage across ALL phases;
     // when exceeded, un-started agents are skipped and the run soft-stops.
     const budget = createBudgetTracker(opts.budgetTokens ?? envBudgetTokens(env));
+    // Accounting stays cumulative across resumes: prior attempts' spend is kept
+    // separate from the tracker so enforcement still runs under a fresh budget
+    // (the resume contract), but the persisted tokensUsed never shrinks.
+    const priorTokens =
+      typeof run.manifest?.tokensUsed === "number" && run.manifest.tokensUsed > 0
+        ? run.manifest.tokensUsed
+        : 0;
+    const totalTokens = () => priorTokens + budget.used();
     // Model routing (#17): opt-in per-label model map ("plan" / "explore:<agent>"
     // / "synth"). Null routes = every agent uses the adapter's default model.
     const routes = opts.modelRoutes ?? envModelRoutes(env);
@@ -476,19 +484,19 @@ export function createBuiltinWorkflows(deps) {
       );
     }
 
-    // Budget soft-stop (#14): don't schedule the synth agent once the cap is
+    // Budget soft-stop (#14): don't schedule the next agent once the cap is
     // blown. The run stays resumable — /maestro-resume replays the cached ok
     // subtasks and reruns only the skipped/failed ones under a fresh budget.
-    if (budget.exceeded()) {
+    const budgetStop = async (before) => {
       releaseRun(runId);
-      await run.patchManifest({ status: "stopped", tokensUsed: budget.used() });
+      await run.patchManifest({ status: "stopped", tokensUsed: totalTokens() });
       await writeRunTrace(run);
       await session.log(
-        `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before synth; finish it later with /maestro-resume ${runId}`,
+        `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before ${before}; finish it later with /maestro-resume ${runId}`,
         { level: "warning" },
       );
       return run;
-    }
+    };
 
     // Optional verify phase (#31): one agent judges each subtask output against
     // the original objective before synth (MAST: high-level objective
@@ -496,6 +504,7 @@ export function createBuiltinWorkflows(deps) {
     // principle as the budget: visibility always-on, cost opt-in. A verify
     // failure is non-fatal: warn and synthesize without the report.
     const verifyEnabled = opts.verify === true || isTruthyEnv(env.GHCP_MAESTRO_VERIFY);
+    if (budget.exceeded()) return budgetStop(verifyEnabled ? "verify" : "synth");
     let verifyReport;
     if (verifyEnabled) {
       await session.log(`ghcp-maestro/${runId}: phase=verify agents=1`);
@@ -518,6 +527,9 @@ export function createBuiltinWorkflows(deps) {
           { level: "warning" },
         );
       }
+      // The verify agent itself consumes tokens — re-check so a cap blown by
+      // verify soft-stops the run instead of failing it when synth is skipped.
+      if (budget.exceeded()) return budgetStop("synth");
     }
 
     // Phase 3 — synth: merge into a single answer to the original task.
@@ -547,10 +559,11 @@ export function createBuiltinWorkflows(deps) {
 
     // Token accounting is always-on (independent of any cap): persist the
     // aggregate so /maestros can show per-run cost even without a budget set.
-    if (budget.used() > 0) await run.patchManifest({ tokensUsed: budget.used() });
+    // Cumulative across resumes — prior attempts' spend is never clobbered.
+    if (totalTokens() > 0) await run.patchManifest({ tokensUsed: totalTokens() });
     await completeRun(run);
     const tokensNote =
-      budget.used() > 0 ? ` tokens=${budget.used()}${budget.limit ? `/${budget.limit}` : ""}` : "";
+      totalTokens() > 0 ? ` tokens=${totalTokens()}${budget.limit ? `/${budget.limit}` : ""}` : "";
     const verifyRan = verifyReport !== undefined ? 1 : 0;
     await session.log(
       `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + verifyRan + 1} agents across ${3 + verifyRan} phases (plan + explore[${specs.length}]${verifyRan ? " + verify" : ""} + synth)${tokensNote}`,
