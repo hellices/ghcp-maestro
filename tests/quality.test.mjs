@@ -257,6 +257,26 @@ test("fixLoop rejects a non-function until (#18)", async () => {
   );
 });
 
+test("fixLoop accepts an explicit stallRounds: 0 to disable stall detection (#18)", async () => {
+  const res = await fixLoop({
+    maxIters: 3,
+    stallRounds: 0,
+    check: async () => ({ ok: false, report: "same report" }),
+    applyFix: () => {},
+  });
+  assert.equal(res.stopReason, "max-iters");
+  assert.equal(res.iterations, 3);
+});
+
+test("fixLoop rejects a negative or fractional stallRounds (#18)", async () => {
+  for (const bad of [-1, 1.5]) {
+    await assert.rejects(
+      () => fixLoop({ stallRounds: bad, check: async () => ({ ok: true }) }),
+      /stallRounds must be a non-negative integer/,
+    );
+  }
+});
+
 // ── crossCheck ─────────────────────────────────────────────────────────────
 
 test("crossCheck aggregates support across sources", async () => {

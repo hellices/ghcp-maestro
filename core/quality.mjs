@@ -240,7 +240,7 @@ export async function fixLoop(opts) {
   }
   const maxIters = clampPositiveInt(opts.maxIters, 5, "maxIters");
   // 0 = stall detection disabled (the default).
-  const stallRounds = clampPositiveInt(opts.stallRounds, 0, "stallRounds");
+  const stallRounds = clampNonNegativeInt(opts.stallRounds, 0, "stallRounds");
   const buildFixPrompt = opts.buildFixPrompt ?? defaultFixPrompt;
   const spawn = opts.spawn ?? defaultSpawn;
   const history = [];
@@ -484,6 +484,14 @@ function clampPositiveInt(value, fallback, name) {
   if (value === undefined) return fallback;
   if (!Number.isInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive integer (got ${value})`);
+  }
+  return value;
+}
+
+function clampNonNegativeInt(value, fallback, name) {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative integer (got ${value})`);
   }
   return value;
 }
