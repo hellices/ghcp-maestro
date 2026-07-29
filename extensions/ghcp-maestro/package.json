@@ -3,5 +3,8 @@
   "version": "0.7.0",
   "private": true,
   "type": "module",
-  "main": "./extension.mjs"
+  "main": "./extension.mjs",
+  "bin": {
+    "maestro-top": "./bin/maestro-top.mjs"
+  }
 }

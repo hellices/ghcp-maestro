@@ -76,6 +76,16 @@ export default [
     },
   },
   {
+    // maestro-top is a standalone viewer process launched from a normal
+    // terminal — it is never connected to the JSON-RPC stdio, and its whole
+    // purpose is to own stdout. console stays off so output goes through the
+    // one write path (process.stdout/stderr.write).
+    files: ["extensions/ghcp-maestro/bin/**/*.mjs"],
+    rules: {
+      "no-restricted-syntax": "off",
+    },
+  },
+  {
     // Example saved workflows run inside the runtime sandbox and use injected
     // globals; they legitimately reference identifiers the linter can't see.
     files: ["extensions/ghcp-maestro/saved-workflows/**/*.mjs"],

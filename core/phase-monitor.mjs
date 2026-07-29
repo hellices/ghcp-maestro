@@ -42,5 +42,31 @@ export function startPhaseMonitor(opts) {
   // concurrent /maestros <runId> shows the phase the moment it starts, before
   // any agent has produced output.
   monitor.flush();
-  return monitor;
+
+  // When the run handle can persist per-agent event streams, tee every
+  // progress event (and the terminal settle) into logs/<agentId>.ndjson for
+  // the maestro-top viewer's drill-down. Best-effort: an append failure must
+  // never break progress reporting, and old handles without the method work
+  // unchanged.
+  const appendEvent = typeof opts.run.appendAgentEvent === "function" ? opts.run.appendAgentEvent.bind(opts.run) : null;
+  if (!appendEvent) return monitor;
+  const phase = opts.phase;
+  return {
+    ...monitor,
+    onProgress(evt) {
+      if (evt?.specId) {
+        const { specId, ...fields } = evt;
+        Promise.resolve(appendEvent(specId, { phase, ...fields })).catch(() => {});
+      }
+      monitor.onProgress(evt);
+    },
+    settle(specId, ok) {
+      if (specId) {
+        Promise.resolve(appendEvent(specId, { phase, state: ok ? "done" : "failed" })).catch(
+          () => {},
+        );
+      }
+      monitor.settle(specId, ok);
+    },
+  };
 }

@@ -1405,3 +1405,26 @@ test("task --write records a check-failure (applied) merge so resume never re-ch
     assert.equal(checked2.length, 1);
   });
 });
+
+test("GHCP_MAESTRO_TUI=1 logs the maestro-top command hint for fresh runs", async () => {
+  await withTempDataDir(async () => {
+    const { runHelloWorkflow } = createBuiltinWorkflows({
+      getAdapter: testAdapter,
+      env: { GHCP_MAESTRO_TUI: "1" },
+    });
+    const session = fakeSession();
+    await runHelloWorkflow(session);
+    const hint = session.logs.find((l) => /maestro-top/.test(l));
+    assert.ok(hint, "TUI launch hint is logged");
+    assert.match(hint, /maestro-top\.mjs run-/, "hint names the run id");
+  });
+});
+
+test("no TUI hint without the opt-in flag", async () => {
+  await withTempDataDir(async () => {
+    const { runHelloWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter, env: {} });
+    const session = fakeSession();
+    await runHelloWorkflow(session);
+    assert.ok(!session.logs.some((l) => /maestro-top/.test(l)));
+  });
+});

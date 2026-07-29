@@ -276,3 +276,51 @@ test("run.complete updates manifest status", async () => {
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+
+test("appendAgentEvent / readAgentEvents round-trip ndjson, tolerate torn tail", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "wf", baseDir });
+    await run.appendAgentEvent("a1", { state: "tool", tool: "read_file" });
+    await run.appendAgentEvent("a1", { state: "streaming", bytes: 2048 });
+    await run.appendAgentEvent("a2", { state: "done", tokens: 500 });
+
+    const a1 = await run.readAgentEvents("a1");
+    assert.equal(a1.length, 2);
+    assert.equal(a1[0].state, "tool");
+    assert.equal(a1[0].tool, "read_file");
+    assert.ok(a1[0].ts > 0, "events are timestamped");
+    assert.equal(a1[1].bytes, 2048);
+
+    const a2 = await run.readAgentEvents("a2");
+    assert.equal(a2.length, 1);
+    assert.equal(a2[0].tokens, 500);
+
+    // missing agent → empty, never throws
+    assert.deepEqual(await run.readAgentEvents("nope"), []);
+
+    // a torn (partial) last line is skipped, earlier lines still parse
+    const { appendFile } = await import("node:fs/promises");
+    await appendFile(join(run.runDir, "logs", "a1.ndjson"), '{"state":"trunc', "utf8");
+    const tolerant = await run.readAgentEvents("a1");
+    assert.equal(tolerant.length, 2);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("appendAgentEvent rejects path-escaping agent ids and caps tail reads", async () => {
+  const baseDir = await freshBase();
+  try {
+    const run = await createRun({ workflow: "wf", baseDir });
+    await assert.rejects(() => run.appendAgentEvent("../evil", { state: "tool" }));
+    await assert.rejects(() => run.readAgentEvents("a/b"));
+
+    for (let i = 0; i < 30; i++) await run.appendAgentEvent("busy", { state: "streaming", i });
+    const tail = await run.readAgentEvents("busy", { limit: 10 });
+    assert.equal(tail.length, 10);
+    assert.equal(tail[9].i, 29, "limit keeps the most recent events");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
