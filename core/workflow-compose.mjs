@@ -238,6 +238,7 @@ const FORBIDDEN = [
   [/\bglobal\b/, "global — global access is not available to workflows"],
   [/\beval\b/, "eval — dynamic code execution is not allowed"],
   [/\bFunction\b/, "Function constructor — dynamic code execution is not allowed"],
+  [/\bconstructor\b/, "constructor access — reaching Function via .constructor is not allowed"],
   [/\bfetch\b/, "fetch — network access is not available to workflows"],
   [/\bWebSocket\b/, "WebSocket — network access is not available to workflows"],
   [/\bchild_process\b/, "child_process — shell access is not available to workflows"],
@@ -426,8 +427,9 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
     return;
   }
 
-  // Show the full script — the review gate below refers to it.
-  await session.log(`ghcp-maestro: compose: generated '${name}':\n\`\`\`js\n${code}\n\`\`\``);
+  // Show the full script — the review gate below refers to it. A four-backtick
+  // fence so triple backticks inside the code cannot truncate the preview.
+  await session.log(`ghcp-maestro: compose: generated '${name}':\n\`\`\`\`js\n${code}\n\`\`\`\``);
 
   // Review gate. Non-interactive hosts fail closed: draft only, never saved
   // or executed without a human decision.

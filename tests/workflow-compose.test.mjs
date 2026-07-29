@@ -101,6 +101,8 @@ test("scanForbiddenGlobals flags escapes but not prompt text", () => {
   assert.ok(scanForbiddenGlobals("globalThis.fetch('http://x')").length > 0);
   assert.ok(scanForbiddenGlobals("new Function('return 1')()").length > 0);
   assert.ok(scanForbiddenGlobals("console.log('hi')").length > 0);
+  // Function reachable via .constructor must be caught too
+  assert.ok(scanForbiddenGlobals("(async () => {}).constructor('x')()").length > 0);
   assert.ok(scanForbiddenGlobals("const e = eval; e('1')").length > 0);
   // hidden inside a template interpolation must still be caught
   assert.ok(scanForbiddenGlobals("const p = `${process.env.SECRET}`;").length > 0);
