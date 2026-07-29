@@ -103,7 +103,7 @@ export function renderTui({ snapshot, manifest, state, events, width = 80 }) {
   });
 
   lines.push("");
-  lines.push(truncate("↑/↓ select · →/enter expand · ← collapse · a all · q quit", width));
+  lines.push(truncate("↑/↓ select · →/enter expand · ← collapse · a all · s stop · q quit", width));
   return lines;
 }
 
@@ -161,6 +161,8 @@ export function mapKeyInput(input) {
       return "collapse";
     case "a":
       return "expandAll";
+    case "s":
+      return "stopAgent";
     case "q":
     case "\u0003":
       return "quit";

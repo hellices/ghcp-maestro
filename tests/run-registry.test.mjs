@@ -103,3 +103,24 @@ test("runPhase prefers an explicitly injected signal over the registry", async (
   assert.equal(seenSignal, explicit.signal);
   assert.equal(reg.size, 0, "registry must not be consulted when a signal is injected");
 });
+
+test("per-agent controllers: ensure/abort scoped to one agent of one run", () => {
+  const reg = createRunRegistry();
+  const a1 = reg.ensureAgentController("run-1", "a1");
+  assert.equal(reg.ensureAgentController("run-1", "a1"), a1, "same controller per (run, agent)");
+  const a2 = reg.ensureAgentController("run-1", "a2");
+  const other = reg.ensureAgentController("run-2", "a1");
+
+  assert.equal(reg.abortAgent("run-1", "a1"), true);
+  assert.equal(a1.signal.aborted, true);
+  assert.equal(a2.signal.aborted, false, "sibling agent untouched");
+  assert.equal(other.signal.aborted, false, "same agent id in another run untouched");
+  assert.equal(reg.abortAgent("run-1", "a1"), false, "entry removed after abort");
+});
+
+test("releaseRun drops that run's agent controllers too", () => {
+  const reg = createRunRegistry();
+  reg.ensureAgentController("run-1", "a1");
+  reg.releaseRun("run-1");
+  assert.equal(reg.abortAgent("run-1", "a1"), false);
+});

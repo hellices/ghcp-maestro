@@ -159,6 +159,25 @@ run 당 에이전트 하나만큼 비용이 더 든다. 검증 에이전트가 �
 동안 세션은 계속 자유롭다. `/maestros` 로 실행 목록과 진행 요약을, `/maestros
 <runId>` 로 에이전트별 상세 대시보드를 본다.
 
+### 라이브 TUI 모니터 (`maestro-top`)
+
+Copilot 세션 밖에서 실시간 뷰가 필요하면 별도 터미널에서 독립 뷰어 실행:
+
+```sh
+node extensions/ghcp-maestro/bin/maestro-top.mjs            # 최신 활성 run 팔로우
+node extensions/ghcp-maestro/bin/maestro-top.mjs <runId>    # 특정 run 팔로우
+node extensions/ghcp-maestro/bin/maestro-top.mjs --all      # 최근 run 목록 1회 출력
+```
+
+run 저장소(`GHCP_MAESTRO_DATA_DIR`)를 읽어 1초마다 갱신: 에이전트별 상태 글리프,
+경과 시간, 출력 바이트, 현재 도구, 토큰 수. 키: `↑`/`↓`(`k`/`j`) 선택,
+`→`/`enter` 이벤트 로그 펼치기, `←` 접기, `a` 전체 펼치기, `s` 선택 에이전트
+중지 요청, `q` 종료. 중지는 협조적 방식 — 뷰어가 run의 `control/` 디렉터리에
+요청 파일을 쓰면 런타임 폴러(~1초)가 해당 에이전트만 abort하고, 나머지 fan-out은
+계속 실행되며 중지된 에이전트는 결과에 `aborted` 로 표시된다.
+`GHCP_MAESTRO_TUI=1` 설정 시 백그라운드 실행 힌트에 run별 `maestro-top` 명령이
+함께 출력된다. 비-TTY 파이프에서는 변경된 프레임만 append 출력으로 동작.
+
 ### OTel GenAI 스타일 trace 내보내기
 
 종료 상태(complete / stopped / error)에 도달한 모든 run 은 매니페스트 옆에
@@ -225,5 +244,6 @@ workflow-api 레퍼런스와 설명을 받아 모듈을 생성한다. 결과는 
 | `GHCP_MAESTRO_RETRIES` | `1` | 일시적 실패 자동 재시도 횟수 (`0` 이면 비활성) |
 | `GHCP_MAESTRO_LARGE_RUN_AGENTS` | `5` | 게이트에서 "large fan-out" 경고를 띄우는 하위 작업 수 |
 | `GHCP_MAESTRO_NO_MONITOR` | 꺼짐 | 실시간 진행 추적 끄기 |
+| `GHCP_MAESTRO_TUI` | 꺼짐 | 백그라운드 실행 힌트에 `maestro-top` 라이브 뷰어 명령 출력 |
 | `GHCP_MAESTRO_DATA_DIR` | `~/.copilot/plugin-data/ghcp-maestro` | run 상태(매니페스트, 에이전트 출력, trace) 저장 위치 |
 | `GHCP_MAESTRO_WORKFLOWS_DIR` | `<cwd>/.ghcp-maestro/workflows` | 프로젝트 저장 워크플로우 디렉터리 (최우선) |

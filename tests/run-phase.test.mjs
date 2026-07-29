@@ -139,3 +139,53 @@ test("runPhase forwards the budget tracker to spawnAll", async () => {
   });
   assert.equal(opts.budget, budget);
 });
+
+test("runPhase drains the control channel mid-phase and stops the addressed agent", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createRun } = await import("../core/run-store.mjs");
+  const { createRunRegistry } = await import("../core/run-registry.mjs");
+  const { requestAgentControl } = await import("../core/tui-control.mjs");
+  const { spawnAll } = await import("../core/spawn.mjs");
+
+  const baseDir = await mkdtemp(join(tmpdir(), "ghcp-maestro-phase-ctl-"));
+  try {
+    const run = await createRun({ workflow: "task", baseDir });
+    const registry = createRunRegistry();
+    const adapter = {
+      name: "mixed",
+      invoke(spec, { signal }) {
+        if (spec.agent === "fast") return Promise.resolve({ text: "ok" });
+        return new Promise((_r, reject) => {
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    };
+    // the stop request is already queued before the phase begins — the poller
+    // must pick it up and abort only the slow agent
+    await requestAgentControl(run.runDir, { agentId: "slow", action: "stop" });
+    const { results } = await runPhase(
+      [
+        { id: "slow", agent: "slow", prompt: "p" },
+        { id: "fast", agent: "fast", prompt: "p" },
+      ],
+      {
+        run,
+        runId: run.runId,
+        phase: "explore",
+        adapter,
+        spawnAll: (specs, opts) => spawnAll(specs, { ...opts, retries: 0 }),
+        startPhaseMonitor: () => null,
+        registry,
+        controlPollMs: 5,
+      },
+    );
+    const byId = Object.fromEntries(results.map((r) => [r.spec.id, r]));
+    assert.equal(byId.slow.status, "aborted");
+    assert.equal(byId.fast.status, "ok");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});

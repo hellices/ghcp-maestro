@@ -20,7 +20,9 @@ import {
   mapKeyInput,
 } from "../../../core/tui.mjs";
 import { resolveTargetRunId, readRunFrame } from "../../../core/tui-data.mjs";
-import { listRuns } from "../../../core/run-store.mjs";
+import { listRuns, defaultBaseDir } from "../../../core/run-store.mjs";
+import { requestAgentControl } from "../../../core/tui-control.mjs";
+import { join } from "node:path";
 
 const POLL_MS = 1000;
 const out = process.stdout;
@@ -104,6 +106,16 @@ async function main() {
     process.stdin.on("data", (chunk) => {
       const key = mapKeyInput(chunk);
       if (!key) return;
+      if (key === "stopAgent") {
+        // side effect, not a state change: drop a stop request into the run's
+        // control dir for the selected agent; the runtime poller picks it up
+        const agentId = agentIds[state.selected];
+        if (agentId) {
+          const runDir = join(defaultBaseDir(), "runs", runId);
+          requestAgentControl(runDir, { agentId, action: "stop" }).catch(() => {});
+        }
+        return;
+      }
       state = reduceKey(state, key, agentIds.length);
       if (state.quit) {
         cleanup();

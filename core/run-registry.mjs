@@ -20,6 +20,8 @@
 export function createRunRegistry() {
   /** @type {Map<string, AbortController>} */
   const controllers = new Map();
+  /** @type {Map<string, Map<string, AbortController>>} runId → agentId → controller */
+  const agentControllers = new Map();
 
   return {
     /**
@@ -53,10 +55,50 @@ export function createRunRegistry() {
 
     /**
      * Drop a run's controller without aborting (terminal-state cleanup).
+     * Per-agent controllers of the run are dropped with it.
      * @param {string} runId
      */
     releaseRun(runId) {
       controllers.delete(runId);
+      agentControllers.delete(runId);
+    },
+
+    /**
+     * Get (or lazily create) the AbortController for one agent of one run.
+     * Used by the maestro-top control channel (issue #46) to stop a single
+     * agent without aborting the whole fan-out.
+     * @param {string} runId
+     * @param {string} agentId
+     * @returns {AbortController}
+     */
+    ensureAgentController(runId, agentId) {
+      let byAgent = agentControllers.get(runId);
+      if (!byAgent) {
+        byAgent = new Map();
+        agentControllers.set(runId, byAgent);
+      }
+      let controller = byAgent.get(agentId);
+      if (!controller) {
+        controller = new AbortController();
+        byAgent.set(agentId, controller);
+      }
+      return controller;
+    },
+
+    /**
+     * Abort one agent of one run, if this process owns a controller for it.
+     * The entry is removed afterwards so a retry of the agent starts fresh.
+     * @param {string} runId
+     * @param {string} agentId
+     * @param {unknown} [reason]
+     * @returns {boolean} true when a live controller was found and aborted
+     */
+    abortAgent(runId, agentId, reason) {
+      const controller = agentControllers.get(runId)?.get(agentId);
+      if (!controller) return false;
+      agentControllers.get(runId).delete(agentId);
+      controller.abort(reason ?? new Error(`agent ${agentId} of run ${runId} stopped by user`));
+      return true;
     },
 
     /** Number of live controllers (diagnostics/tests). */
@@ -71,3 +113,7 @@ const defaultRegistry = createRunRegistry();
 export const ensureRunController = (runId) => defaultRegistry.ensureRunController(runId);
 export const abortRun = (runId, reason) => defaultRegistry.abortRun(runId, reason);
 export const releaseRun = (runId) => defaultRegistry.releaseRun(runId);
+export const ensureAgentController = (runId, agentId) =>
+  defaultRegistry.ensureAgentController(runId, agentId);
+export const abortAgent = (runId, agentId, reason) =>
+  defaultRegistry.abortAgent(runId, agentId, reason);

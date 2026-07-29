@@ -5,6 +5,7 @@ import {
   reduceKey,
   renderTui,
   renderRunsOverview,
+  mapKeyInput,
 } from "../core/tui.mjs";
 
 const SNAP = {
@@ -124,4 +125,15 @@ test("renderRunsOverview renders one row per run manifest", () => {
   const text = lines.join("\n");
   assert.match(text, /run-1.*task.*running/);
   assert.match(text, /run-0.*deep-review.*complete/);
+});
+
+test("mapKeyInput maps s to stopAgent and renderTui advertises it", () => {
+  assert.equal(mapKeyInput("s"), "stopAgent");
+  const lines = renderTui({
+    snapshot: { done: 0, total: 1, maxElapsedMs: 0, totalTokens: 0, agents: [{ specId: "a", agent: "a", state: "running", elapsedMs: 0 }] },
+    manifest: { runId: "run-x", workflow: "task", status: "running" },
+    state: initialTuiState(),
+    events: {},
+  });
+  assert.match(lines[lines.length - 1], /s stop/);
 });
