@@ -65,9 +65,8 @@ export async function showRuns(session, arg, deps = {}) {
   await session.log(`ghcp-maestro: ${runs.length} recent run(s) (newest first):`);
   for (const m of runs) {
     const argsPreview = m.args ? JSON.stringify(m.args).slice(0, 80) : "";
-    const tokensNote = typeof m.tokensUsed === "number" && m.tokensUsed > 0 ? `  tokens=${m.tokensUsed}` : "";
     await session.log(
-      `  ${m.runId}  workflow=${m.workflow}  status=${m.status}  started=${new Date(m.startedAt).toISOString()}${tokensNote}${argsPreview ? `  args=${argsPreview}` : ""}`,
+      `  ${m.runId}  workflow=${m.workflow}  status=${m.status}  started=${new Date(m.startedAt).toISOString()}${argsPreview ? `  args=${argsPreview}` : ""}`,
     );
     if (m.status === "running") {
       const snap = await readRunProgress(m.runId).catch(() => undefined);

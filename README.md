@@ -38,44 +38,10 @@ tunable with `GHCP_MAESTRO_RETRIES=<n>` (`0` disables).
 **Cost visibility and a token budget.**
 Before fan-out the gate shows a run-size estimate, and runs of
 `GHCP_MAESTRO_LARGE_RUN_AGENTS` or more subtasks (default 5) get an explicit
-warning. Token accounting is always on: every completed run logs its total
-token usage and records it in the run manifest, so `/maestros` shows per-run
-cost. Enforcement is opt-in — set `GHCP_MAESTRO_BUDGET_TOKENS=<n>`
-(`500k` / `2m` shorthand works) to cap a run: once the cap is hit, in-flight
-agents finish, un-started agents are skipped, and the run is soft-stopped —
-resumable later with `/maestro-resume`. `/maestros` shows live per-agent and
-total token usage.
-
-**Model routing (opt-in).**
-Worker agents doing mechanical subtasks rarely need the same model as the
-planner or the synth phase. Set `GHCP_MAESTRO_MODEL_ROUTES` to a JSON map from
-label pattern to model — labels are `plan`, `explore:<agent>`, `synth`; `*`
-wildcards, first match wins:
-
-```
-GHCP_MAESTRO_MODEL_ROUTES='{"explore:*":"gpt-5-mini","synth":"claude-sonnet-4.5"}'
-```
-
-Unmatched labels (and no routes at all — the default) fall back to the child
-session's default model.
-
-**Verification before synthesis (opt-in).**
-Set `GHCP_MAESTRO_VERIFY=1` to insert a verify phase between fan-out and
-synthesis: one extra agent judges each subtask output against the original
-task objective (met / partially-met / not-met, with concrete gaps) and the
-report is fed to the synth agent so unverified claims aren't presented as
-settled facts. Off by default — it costs one extra agent per run. A failed
-verify agent never fails the run; synthesis proceeds without the report.
-
-**OTel GenAI-style trace export.**
-Every run that reaches a terminal state (complete / stopped / error) writes a
-`trace.json` next to its manifest: one `invoke_workflow` root span plus an
-`invoke_agent` span per agent, using OpenTelemetry GenAI semantic-convention
-attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`,
-`gen_ai.conversation.id`, `gen_ai.usage.total_tokens`, `error.type`). It is an
-OTel-style JSON document, not a full OTLP payload — post-process it into a
-real exporter if you need one. (The upstream GenAI conventions are still in
-Development status, so attribute names may drift.)
+warning. Set `GHCP_MAESTRO_BUDGET_TOKENS=<n>` (`500k` / `2m` shorthand works)
+to cap a run: once the cap is hit, in-flight agents finish, un-started agents
+are skipped, and the run is soft-stopped — resumable later with
+`/maestro-resume`. `/maestros` shows live per-agent and total token usage.
 
 **Result synthesis.**
 A `synth` agent cross-checks every subtask output and merges them into a final
