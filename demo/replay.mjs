@@ -13,7 +13,8 @@
 // Usage: node demo/replay.mjs        (DEMO_SPEED=3 for a 3x faster dry run)
 
 const out = process.stdout;
-const SPEED = Number(process.env.DEMO_SPEED) || 1;
+const envSpeed = Number(process.env.DEMO_SPEED);
+const SPEED = Number.isFinite(envSpeed) && envSpeed > 0 ? envSpeed : 1;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
 
 const ESC = "\u001b[";
