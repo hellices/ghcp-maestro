@@ -63,6 +63,43 @@ single subtask instead of their sum. Each agent has a generous timeout
 runs), and transient failures (API blips, rate limits) retry automatically with
 exponential backoff.
 
+### Write mode — worktree-per-agent isolation (opt-in)
+
+By default every agent runs read-only against your working directory, which is
+safe for research, review, and audits. For repo-modifying work — migration
+sweeps, batch refactoring, test generation — add `--write`:
+
+```text
+/maestro task --write Migrate every call of legacy restClient to graphqlClient
+```
+
+What changes:
+
+- **Disjoint file scopes.** The plan agent must declare which files each
+  subtask will modify, and no two subtasks may claim the same file (or a
+  directory containing another subtask's files). Overlaps are rejected and the
+  planner retries.
+- **A worktree per agent.** Each subtask gets its own `git worktree` on a
+  fresh branch `maestro/<runId>/<agent>` (under the run's data dir), and its
+  prompt pins it there: work only in that directory, touch only the declared
+  scope, commit the result.
+- **Sequential integration.** After the fan-out, branches merge back into your
+  current branch one at a time. Set `GHCP_MAESTRO_CHECK_CMD` (e.g. `npm test`)
+  to run a check after each merge — the only known mitigation for semantic
+  conflicts git can't detect. A conflict or check failure stops integration
+  and reports exactly which branches merged and which are left for manual
+  resolution; nothing is force-cleaned.
+- **Safety rails.** Requires a clean git work tree (`--allow-dirty` to
+  override) on a checked-out branch; refuses to run outside a git repository —
+  all checked before a single token is spent. Worktrees with uncommitted work
+  are never removed.
+
+Known limitations (shared by every tool in this space): lockfiles and
+generated files are a common conflict source — keep them out of subtask
+scopes; and a passing check after each merge is still no guarantee two
+changes compose semantically. Review the integrated result as you would a
+human PR train.
+
 ### Pre-approval before fan-out
 
 On an interactive host, ghcp-maestro pauses after planning to show the subtask
@@ -174,6 +211,7 @@ intentionally omitted here.)
 | `GHCP_MAESTRO_BUDGET_TOKENS` | unlimited | Token cap per run attempt (`500k` / `2m` shorthand); soft-stops the run when hit |
 | `GHCP_MAESTRO_MODEL_ROUTES` | none | JSON map of agent label → model (`plan`, `explore:<agent>`, `verify`, `synth`; `*` wildcards) |
 | `GHCP_MAESTRO_VERIFY` | off | Insert a verify phase between fan-out and synthesis (one extra agent per run) |
+| `GHCP_MAESTRO_CHECK_CMD` | off | Write mode: shell command (e.g. `npm test`) run after each branch merge; failure stops integration |
 | `GHCP_MAESTRO_TIMEOUT_MS` | `600000` (10 min) | Per-agent timeout |
 | `GHCP_MAESTRO_RETRIES` | `1` | Automatic retries for transient agent failures (`0` disables) |
 | `GHCP_MAESTRO_LARGE_RUN_AGENTS` | `5` | Subtask count that triggers the "large fan-out" warning at the gate |

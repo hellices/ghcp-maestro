@@ -269,3 +269,79 @@ test("neutralizeUntrusted defangs sentinel literals and leaves other text alone"
   assert.ok(!neutralizeUntrusted(`${UNTRUSTED_OPEN} x ${UNTRUSTED_CLOSE}`).includes(UNTRUSTED_OPEN));
   assert.equal(neutralizeUntrusted(null), "");
 });
+
+// --- write mode: files scopes (#40) -----------------------------------------
+
+test("parseAndValidatePlan accepts and dedupes an optional files array", () => {
+  const specs = parse(
+    JSON.stringify([
+      { agent: "a", prompt: "pa", files: ["src/a.mjs", "src/a.mjs"] },
+      { agent: "b", prompt: "pb" },
+      { agent: "c", prompt: "pc" },
+    ]),
+  );
+  assert.deepEqual(specs[0].files, ["src/a.mjs"]);
+  assert.equal(specs[1].files, undefined);
+});
+
+test("parseAndValidatePlan rejects malformed files entries", () => {
+  assert.throws(
+    () =>
+      parse(
+        JSON.stringify([
+          { agent: "a", prompt: "pa", files: [] },
+          { agent: "b", prompt: "pb" },
+          { agent: "c", prompt: "pc" },
+        ]),
+      ),
+    /"files" must be a non-empty array/,
+  );
+  assert.throws(
+    () =>
+      parse(
+        JSON.stringify([
+          { agent: "a", prompt: "pa", files: [""] },
+          { agent: "b", prompt: "pb" },
+          { agent: "c", prompt: "pc" },
+        ]),
+      ),
+    /"files" entries must be non-empty strings/,
+  );
+});
+
+test("parseAndValidatePlan requireFiles demands a files scope on every entry", () => {
+  assert.throws(
+    () =>
+      parse(
+        JSON.stringify([
+          { agent: "a", prompt: "pa", files: ["src/a"] },
+          { agent: "b", prompt: "pb" },
+          { agent: "c", prompt: "pc", files: ["src/c"] },
+        ]),
+        { requireFiles: true },
+      ),
+    /entry 1 \(b\) missing "files"/,
+  );
+});
+
+test("parseAndValidatePlan keeps files alongside dependsOn", () => {
+  const specs = parse(
+    JSON.stringify([
+      { agent: "a", prompt: "pa", files: ["src/a"] },
+      { agent: "b", prompt: "pb", files: ["src/b"], dependsOn: ["a"] },
+      { agent: "c", prompt: "pc", files: ["src/c"] },
+    ]),
+    { requireFiles: true },
+  );
+  assert.deepEqual(specs[1], { agent: "b", prompt: "pb", files: ["src/b"], dependsOn: ["a"] });
+});
+
+test("buildPlanPrompt writeMode adds the files schema and disjoint-scope rule", () => {
+  const writePrompt = buildPlanPrompt("migrate stuff", undefined, undefined, undefined, true);
+  assert.match(writePrompt, /"files": \[/);
+  assert.match(writePrompt, /WRITE MODE.*disjoint/i);
+  // Read-only prompt stays byte-shape compatible: no files/write-mode mention.
+  const readPrompt = buildPlanPrompt("migrate stuff");
+  assert.ok(!readPrompt.includes('"files"'));
+  assert.ok(!readPrompt.includes("WRITE MODE"));
+});

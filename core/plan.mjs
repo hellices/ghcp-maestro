@@ -31,16 +31,20 @@ export const MAX_AGENT_ID_LEN = 40;
  * @param {string} [refsBlock] - optional reference-material block (from
  *   `buildFileRefsBlock`) inserted right after the task line so the planner
  *   decomposes against the full spec, not just the one-line trigger.
+ * @param {boolean} [writeMode] - write mode (#40): the schema requires a
+ *   per-subtask `files` scope and the rules demand disjoint scopes.
  * @returns {string}
  */
-export function buildPlanPrompt(task, parserError, previousReply, refsBlock) {
+export function buildPlanPrompt(task, parserError, previousReply, refsBlock, writeMode) {
   const lines = [
     "You are a planning agent for a dynamic multi-agent workflow runtime.",
     "Decompose the following task into 3 to 6 subtasks that run in parallel. Subtasks are INDEPENDENT by default and must not assume they can see each other's output.",
     "Each subtask runs in its own isolated Copilot session — there is no shared state, no chat history, no working directory you can rely on. Subtasks must therefore be self-contained: include any context they need inside the prompt itself.",
     "",
     "Reply with ONLY a JSON array. No prose, no markdown fences, no commentary. Schema:",
-    '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>", "dependsOn": ["<agent>"] }, ... ]',
+    writeMode
+      ? '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>", "files": ["<relative path or directory this subtask will modify>"], "dependsOn": ["<agent>"] }, ... ]'
+      : '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>", "dependsOn": ["<agent>"] }, ... ]',
     "",
     "Rules:",
     `- ${MIN_PLAN_ENTRIES} <= length <= ${MAX_PLAN_ENTRIES}`,
@@ -49,9 +53,13 @@ export function buildPlanPrompt(task, parserError, previousReply, refsBlock) {
     "- `dependsOn` is OPTIONAL: list the `agent` ids whose output this subtask genuinely needs — its prompt will then receive those outputs. Prefer no dependencies (most subtasks should have none), never chain deeper than one dependent of a dependent, and never create cycles.",
     "- Each `prompt` should produce a focused, finite answer in 1-2 short paragraphs or a small list. No open-ended exploration.",
     "- Cover the task from genuinely different angles; do not duplicate.",
-    "",
-    `Task: ${task}`,
   ];
+  if (writeMode) {
+    lines.push(
+      "- WRITE MODE: every entry MUST declare `files` — the relative files or directories it will modify. Scopes MUST be disjoint: no two subtasks may claim the same file, and no scope may contain another subtask's scope. Split the task along file boundaries, not feature boundaries, so parallel agents never touch the same file.",
+    );
+  }
+  lines.push("", `Task: ${task}`);
   if (refsBlock) {
     lines.push(refsBlock);
   }
@@ -76,9 +84,11 @@ export function buildPlanPrompt(task, parserError, previousReply, refsBlock) {
  * Throws an Error with a human-readable message on any schema violation.
  *
  * @param {string} text
- * @returns {{ agent: string, prompt: string }[]}
+ * @param {{ requireFiles?: boolean }} [opts] — requireFiles: every entry must
+ *   declare a non-empty `files` scope array (write mode, #40)
+ * @returns {{ agent: string, prompt: string, files?: string[], dependsOn?: string[] }[]}
  */
-export function parseAndValidatePlan(text) {
+export function parseAndValidatePlan(text, opts = {}) {
   if (!text) throw new Error("empty plan response");
   let body = text.trim();
 
@@ -146,6 +156,27 @@ export function parseAndValidatePlan(text) {
       );
     }
 
+    // Optional files scope (#40): required in write mode, tolerated otherwise.
+    let files;
+    if (entry.files !== undefined) {
+      if (!Array.isArray(entry.files) || entry.files.length === 0) {
+        throw new Error(`entry ${i} (${agent}) "files" must be a non-empty array of paths`);
+      }
+      files = [];
+      for (const f of entry.files) {
+        if (typeof f !== "string" || f.trim() === "") {
+          throw new Error(`entry ${i} (${agent}) "files" entries must be non-empty strings`);
+        }
+        const scoped = f.trim();
+        if (!files.includes(scoped)) files.push(scoped);
+      }
+    } else if (opts.requireFiles) {
+      throw new Error(
+        `entry ${i} (${agent}) missing "files" — write mode requires every subtask to declare the files it will modify`,
+      );
+    }
+    const base = files ? { agent, prompt, files } : { agent, prompt };
+
     // Optional dependsOn (#21): validated per entry here; cross-entry checks
     // (unknown names, cycles) happen after the loop once all names are known.
     if (entry.dependsOn !== undefined) {
@@ -161,10 +192,10 @@ export function parseAndValidatePlan(text) {
         if (dep === agent) throw new Error(`entry ${i} (${agent}) cannot depend on itself`);
         if (!deps.includes(dep)) deps.push(dep);
       }
-      normalized.push(deps.length > 0 ? { agent, prompt, dependsOn: deps } : { agent, prompt });
+      normalized.push(deps.length > 0 ? { ...base, dependsOn: deps } : base);
       continue;
     }
-    normalized.push({ agent, prompt });
+    normalized.push(base);
   }
 
   const names = new Set(normalized.map((e) => e.agent));

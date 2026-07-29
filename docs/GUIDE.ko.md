@@ -56,6 +56,37 @@ ghcp-maestro 가 하는 일과 모든 설정을 다루는 상세 문서.
 줄어든다. 에이전트별 타임아웃은 기본 10 분 (`GHCP_MAESTRO_TIMEOUT_MS` 로 연장
 가능)이고, 일시적 실패(API 오류, rate limit)는 지수 백오프로 자동 재시도한다.
 
+### 쓰기 모드 — worktree-per-agent 격리 (opt-in)
+
+기본값은 모든 에이전트가 작업 디렉터리에 읽기 전용으로 동작 — 리서치, 리뷰,
+감사에 안전하다. 마이그레이션 스윕, 일괄 리팩토링, 테스트 생성처럼 저장소를
+수정하는 작업에는 `--write` 를 붙인다:
+
+```text
+/maestro task --write legacy restClient 호출 전부를 graphqlClient로 마이그레이션
+```
+
+달라지는 것:
+
+- **분리된 파일 스코프.** plan 에이전트가 하위 작업별 수정 파일을 선언해야
+  하고, 두 하위 작업이 같은 파일(또는 다른 작업의 파일을 포함하는 디렉터리)을
+  가질 수 없다. 겹치면 거부되고 planner가 재시도한다.
+- **에이전트별 worktree.** 하위 작업마다 전용 `git worktree` 와 새 브랜치
+  `maestro/<runId>/<agent>` (run 데이터 디렉터리 아래)를 받고, 프롬프트가
+  그곳에 고정된다: 그 디렉터리에서만 작업, 선언한 스코프만 수정, 결과는 커밋.
+- **순차 통합.** fan-out 후 브랜치를 현재 브랜치로 하나씩 머지한다.
+  `GHCP_MAESTRO_CHECK_CMD` (예: `npm test`)를 설정하면 머지마다 검사 실행 —
+  git이 감지 못하는 의미 충돌에 대한 유일한 알려진 완화책. 충돌이나 검사
+  실패 시 통합을 멈추고 어떤 브랜치가 머지됐고 무엇이 수동 해결로 남았는지
+  정확히 보고한다; 강제 정리는 없다.
+- **안전장치.** 깨끗한 git 작업 트리(`--allow-dirty` 로 해제)와 체크아웃된
+  브랜치 필요; git 저장소 밖에서는 거부 — 전부 토큰 소비 전에 검사.
+  커밋 안 된 작업이 있는 worktree는 절대 제거하지 않는다.
+
+알려진 한계 (이 분야 모든 도구 공통): lockfile 과 생성 파일은 흔한 충돌
+원인이므로 하위 작업 스코프에서 제외할 것; 머지마다 검사를 통과해도 두 변경이
+의미적으로 결합됨을 보장하지는 않는다. 통합 결과는 사람 PR 처럼 리뷰할 것.
+
 ### fan-out 전 사전 승인
 
 대화형 환경에서는 계획 수립 후 잠시 멈춰, 하위 작업 목록과 프롬프트 미리보기를
@@ -162,6 +193,7 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 | `GHCP_MAESTRO_BUDGET_TOKENS` | 무제한 | run 시도당 토큰 상한 (`500k` / `2m` 축약); 도달 시 soft-stop |
 | `GHCP_MAESTRO_MODEL_ROUTES` | 없음 | 에이전트 라벨 → 모델 JSON 맵 (`plan`, `explore:<agent>`, `verify`, `synth`; `*` 와일드카드) |
 | `GHCP_MAESTRO_VERIFY` | 꺼짐 | fan-out 과 종합 사이에 검증 단계 삽입 (run 당 에이전트 1개 추가) |
+| `GHCP_MAESTRO_CHECK_CMD` | 꺼짐 | 쓰기 모드: 브랜치 머지마다 실행할 셸 명령 (예: `npm test`); 실패 시 통합 중단 |
 | `GHCP_MAESTRO_TIMEOUT_MS` | `600000` (10분) | 에이전트별 타임아웃 |
 | `GHCP_MAESTRO_RETRIES` | `1` | 일시적 실패 자동 재시도 횟수 (`0` 이면 비활성) |
 | `GHCP_MAESTRO_LARGE_RUN_AGENTS` | `5` | 게이트에서 "large fan-out" 경고를 띄우는 하위 작업 수 |

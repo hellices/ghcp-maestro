@@ -11,6 +11,7 @@
 // settle + flush), so the monitoring choreography lives in exactly one place.
 
 import { DEFAULT_CONCURRENCY } from "./spawn.mjs";
+import { join } from "node:path";
 import { runPhase } from "./run-phase.mjs";
 import { createRun } from "./run-store.mjs";
 import { failRun, completeRun, writeRunTrace } from "./run-flow.mjs";
@@ -19,6 +20,18 @@ import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, augmentPromptWithDeps } from "./plan.mjs";
 import { parseFileRefs, loadFileRefs, buildFileRefsBlock } from "./task-inputs.mjs";
+import {
+  parseWriteFlags,
+  WRITE_FLAG,
+  ALLOW_DIRTY_FLAG,
+  assertWritableRepo,
+  validateDisjointScopes,
+  createWorktrees,
+  buildWritePrompt,
+  integrateBranches,
+  cleanupWorktrees,
+  makeCheckRunner,
+} from "./write-mode.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { envModelRoutes, resolveModel } from "./model-routes.mjs";
@@ -33,6 +46,11 @@ import {
   labeledDumpLine,
   synthStatusLine,
 } from "./workflow-log.mjs";
+
+// Worktree dirs and branch names land on case-insensitive filesystems
+// (Windows/macOS default), where "API" and "api" are the same directory —
+// hence the lowercasing on top of the base sanitizer.
+const sanitizeWriteAgentName = (name) => sanitizeAgentName(name).toLowerCase();
 
 /**
  * Spread-helper: `{ model }` when the routing map resolved one, `{}` otherwise —
@@ -293,13 +311,48 @@ export function createBuiltinWorkflows(deps) {
    * subagent that already succeeded is replayed from cache on /maestro-resume.
    */
   async function runTaskWorkflow(session, rawTask, opts = {}) {
+    // Write mode (#40): strictly opt-in — via --write on the task line or the
+    // opts.write escape hatch (used by other surfaces/tests). The manifest
+    // task line carries the EFFECTIVE flags (see manifestTask below), so
+    // resume replays the same mode even when it was enabled via opts.write.
+    const flags = parseWriteFlags(rawTask);
+    const writeMode = flags.write || opts.write === true;
+    const gitExec = opts.gitExec; // injectable for tests; undefined = real git
+    let targetBranch;
+    if (writeMode) {
+      try {
+        ({ branch: targetBranch } = await assertWritableRepo({
+          exec: gitExec,
+          cwd: opts.cwd,
+          allowDirty: flags.allowDirty || opts.allowDirty === true,
+        }));
+      } catch (err) {
+        if (opts.run) throw err;
+        await session.log(`ghcp-maestro: ${err?.message ?? err}`, { level: "error" });
+        return null;
+      }
+    }
     // @file references (#39): resolve before the run exists so a bad path
     // costs nothing. The manifest keeps the RAW line — resume replays the
     // same resolution (and correctly fails if the spec file disappeared).
-    const inputs = await resolveTaskInputs(session, rawTask, opts);
+    // Flag stripping only applies in write mode — a read-only task keeps its
+    // text verbatim (e.g. a question ABOUT "--allow-dirty").
+    const inputs = await resolveTaskInputs(session, writeMode ? flags.task : rawTask, opts);
     if (!inputs) return null;
     const { task, refsBlock } = inputs;
-    const run = opts.run ?? (await createRun({ workflow: "task", args: { task: rawTask } }));
+    // The manifest line must carry the EFFECTIVE flags — write mode enabled
+    // via opts.write alone would otherwise be silently off on /maestro-resume
+    // (resume replays only the manifest's raw line).
+    const manifestTask = writeMode
+      ? [
+          WRITE_FLAG,
+          flags.allowDirty || opts.allowDirty === true ? ALLOW_DIRTY_FLAG : null,
+          flags.task,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : rawTask;
+    const run = opts.run ?? (await createRun({ workflow: "task", args: { task: manifestTask } }));
     const runId = run.runId;
     const adapter = getAdapter();
     // Per-run token budget (#14): accumulates per-turn usage across ALL phases;
@@ -322,6 +375,11 @@ export function createBuiltinWorkflows(deps) {
     await session.log(
       `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
     );
+    if (writeMode) {
+      await session.log(
+        `ghcp-maestro/${runId}: WRITE MODE — worktree-per-agent isolation, integrating into branch "${targetBranch}"`,
+      );
+    }
     if (budget.limit) {
       await session.log(`ghcp-maestro/${runId}: token budget: ${budget.limit} tokens`);
     }
@@ -336,7 +394,7 @@ export function createBuiltinWorkflows(deps) {
       id: "plan",
       agent: "plan",
       timeoutMs: TIMEOUT_AGENT_MS,
-      prompt: buildPlanPrompt(task, undefined, undefined, refsBlock),
+      prompt: buildPlanPrompt(task, undefined, undefined, refsBlock, writeMode),
       ...withModel(resolveModel("plan", routes)),
     };
     const {
@@ -355,9 +413,41 @@ export function createBuiltinWorkflows(deps) {
       `ghcp-maestro/${runId}: plan${planResult.cached ? " (cached)" : ""} took=${planResult.finishedAt - planResult.startedAt}ms chars=${planText.length}`,
     );
 
+    // Write mode adds a second validation layer on top of the schema: scopes
+    // must be disjoint (the same-file-overwrite hazard) and agent ids must
+    // stay unique AFTER sanitization (branch/worktree names derive from the
+    // sanitized id — a collision would silently share a worktree). Both throw
+    // a human-readable message the planner can retry against.
+    const validatePlanText = (text) => {
+      const parsed = parseAndValidatePlan(text, { requireFiles: writeMode });
+      if (writeMode) {
+        // validateDisjointScopes returns the NORMALIZED scopes — use those
+        // everywhere downstream (worktree prompts) so raw model output can't
+        // smuggle control characters or path variants past validation.
+        const normalizedScopes = validateDisjointScopes(parsed);
+        for (let i = 0; i < parsed.length; i += 1) {
+          parsed[i] = { ...parsed[i], files: normalizedScopes[i].files };
+        }
+        const sanitized = new Map();
+        for (const s of parsed) {
+          // Lowercased key: worktree dirs land on case-insensitive
+          // filesystems (Windows/macOS default), where "API" and "api" are
+          // the same directory.
+          const key = sanitizeWriteAgentName(s.agent);
+          if (sanitized.has(key)) {
+            throw new Error(
+              `write mode: agent ids "${sanitized.get(key)}" and "${s.agent}" collide after sanitization ("${key}") — branch and worktree names must be unique; rename one`,
+            );
+          }
+          sanitized.set(key, s.agent);
+        }
+      }
+      return parsed;
+    };
+
     let specs;
     try {
-      specs = parseAndValidatePlan(planText);
+      specs = validatePlanText(planText);
     } catch (err) {
       await session.log(
         `ghcp-maestro/${runId}: plan parse failed: ${err.message}. Asking the planner to retry with the parser feedback.`,
@@ -369,7 +459,7 @@ export function createBuiltinWorkflows(deps) {
         id: "plan-retry",
         agent: "plan",
         timeoutMs: TIMEOUT_AGENT_MS,
-        prompt: buildPlanPrompt(task, err.message, planText, refsBlock),
+        prompt: buildPlanPrompt(task, err.message, planText, refsBlock, writeMode),
         ...withModel(resolveModel("plan", routes)),
       };
       const {
@@ -384,7 +474,7 @@ export function createBuiltinWorkflows(deps) {
         );
       }
       try {
-        specs = parseAndValidatePlan((retryResult.output?.text ?? "").trim());
+        specs = validatePlanText((retryResult.output?.text ?? "").trim());
       } catch (err2) {
         return failRun(
           session,
@@ -452,6 +542,44 @@ export function createBuiltinWorkflows(deps) {
       specs = gate.selected;
     }
 
+    // Write mode (#40): one worktree + branch per agent, created only after
+    // the gate so an aborted run never litters the repo. Failure here is
+    // fatal — a partial worktree set must not fan out.
+    let worktrees = [];
+    const worktreeByAgent = new Map();
+    if (writeMode) {
+      const worktreeRoot = join(run.runDir, "worktrees");
+      try {
+        worktrees = await createWorktrees(specs.map((s) => ({ agent: sanitizeWriteAgentName(s.agent) })), {
+          exec: gitExec,
+          cwd: opts.cwd,
+          root: worktreeRoot,
+          runId,
+        });
+      } catch (err) {
+        return failRun(
+          session,
+          run,
+          `ghcp-maestro/${runId}: write mode: worktree setup failed: ${err?.message ?? err}`,
+          tokensPatch(),
+        );
+      }
+      for (const [i, wt] of worktrees.entries()) {
+        worktreeByAgent.set(specs[i].agent, { ...wt, files: specs[i].files ?? [] });
+      }
+      // Cap the enumeration — at large fan-outs a full branch list would blow
+      // up the JSON-RPC log payload. Names follow maestro/<runId>/<agent>
+      // anyway, so the head + count is enough to locate them.
+      const branchPreview = worktrees
+        .slice(0, 8)
+        .map((w) => w.branch)
+        .join(", ");
+      const branchSuffix = worktrees.length > 8 ? `, … +${worktrees.length - 8} more` : "";
+      await session.log(
+        `ghcp-maestro/${runId}: created ${worktrees.length} worktree(s) under ${worktreeRoot} (branches: ${branchPreview}${branchSuffix})`,
+      );
+    }
+
     // Phase 2 — explore: fan out the planned specs, layer by layer (#21).
     // Independent specs land in layer 0 and run in one parallel wave exactly as
     // before; specs with `dependsOn` run in later layers with their
@@ -464,7 +592,11 @@ export function createBuiltinWorkflows(deps) {
       // Subtask prompts carry the spec too (#39): each child session is
       // isolated, so without this it would have to rediscover the file — or
       // worse, run blind against a one-line summary of a detailed spec.
-      prompt: s.prompt + refsBlock,
+      // Write mode (#40) additionally pins the agent to its own worktree.
+      prompt:
+        (worktreeByAgent.has(s.agent)
+          ? buildWritePrompt(s.prompt, worktreeByAgent.get(s.agent))
+          : s.prompt) + refsBlock,
       ...(s.dependsOn ? { dependsOn: s.dependsOn } : {}),
       timeoutMs: TIMEOUT_AGENT_MS,
       ...withModel(resolveModel(`explore:${s.agent}`, routes)),
@@ -549,6 +681,115 @@ export function createBuiltinWorkflows(deps) {
         run,
         `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed${hint}`,
         tokensPatch(),
+      );
+    }
+
+    // Write mode (#40): sequential integration — merge each ok agent's branch
+    // back into the target branch one at a time, running the optional check
+    // command after each merge (the only documented mitigation for semantic
+    // conflicts git can't detect). A conflict or check failure stops
+    // integration with the remaining branches left for manual resolution.
+    if (writeMode) {
+      // Merge in topological order — dependencies land on the target branch
+      // before their dependents, mirroring the explore layers. On resume,
+      // branches the previous attempt already merged (recorded in the
+      // manifest) are skipped — re-merging is a no-op but would re-run the
+      // check command, which may be slow or carry side effects.
+      const alreadyMerged = new Set(run.manifest?.write?.merged ?? []);
+      const okAgents = layers
+        .flat()
+        .map((s) => s.agent)
+        .filter((agent) => resultByAgent.get(agent)?.status === "ok")
+        .map((agent) => ({ agent, branch: worktreeByAgent.get(agent).branch }));
+      const okBranches = okAgents.filter(({ branch }) => !alreadyMerged.has(branch));
+      const checkCmd = opts.checkCmd ?? (env.GHCP_MAESTRO_CHECK_CMD || undefined);
+      const runCheck =
+        opts.runCheck ?? (checkCmd ? makeCheckRunner(checkCmd, opts.cwd) : undefined);
+      await session.log(
+        `ghcp-maestro/${runId}: phase=integrate branches=${okBranches.length}${alreadyMerged.size > 0 ? ` (skipping ${alreadyMerged.size} already merged)` : ""} target=${targetBranch}${checkCmd ? ` check="${checkCmd}"` : ""}`,
+      );
+      let integration;
+      try {
+        integration = await integrateBranches(okBranches, {
+          exec: gitExec,
+          cwd: opts.cwd,
+          targetBranch,
+          runCheck,
+          log: (msg) => session.log(`ghcp-maestro/${runId}: ${msg}`),
+        });
+      } catch (err) {
+        // e.g. HEAD moved off targetBranch while agents ran. Fail the run
+        // explicitly — bubbling would leave it stuck in "running" with the
+        // worktrees leaked silently.
+        return failRun(
+          session,
+          run,
+          `ghcp-maestro/${runId}: write mode: integration failed — ${err?.message ?? err}. Nothing was merged; agent branches and worktrees are kept under ${join(run.runDir, "worktrees")}. Fix the repo state and run /maestro-resume ${runId}`,
+          tokensPatch(),
+        );
+      }
+      // Remove the worktrees whose branches are on the target branch: newly
+      // merged ones, plus already-merged ones recreated by resume (their
+      // content landed in a previous attempt). Failed and remaining ones keep
+      // their worktrees so nothing is lost.
+      const mergedAgents = new Set(
+        okAgents
+          .filter((b) => integration.merged.includes(b.branch) || alreadyMerged.has(b.branch))
+          .map((b) => b.agent),
+      );
+      const cleanup = await cleanupWorktrees(
+        specs
+          .filter((s) => mergedAgents.has(s.agent))
+          .map((s) => ({
+            agent: s.agent,
+            dir: worktreeByAgent.get(s.agent).dir,
+            branch: worktreeByAgent.get(s.agent).branch,
+          })),
+        { exec: gitExec, cwd: opts.cwd },
+      );
+      for (const keptWt of cleanup.kept) {
+        await session.log(`ghcp-maestro/${runId}: kept worktree ${keptWt.dir} (${keptWt.reason})`, {
+          level: "warning",
+        });
+      }
+      await run.patchManifest({
+        write: {
+          targetBranch,
+          // Cumulative across resume attempts — the filter above relies on
+          // it. A check-failure merge stays APPLIED on the target branch, so
+          // it counts as merged too: resume must not re-merge it or re-run
+          // the check for it (reverting it is a deliberate manual act — after
+          // that, integrate the branch manually as well).
+          merged: [
+            ...alreadyMerged,
+            ...integration.merged,
+            ...(integration.failed?.applied ? [integration.failed.branch] : []),
+          ],
+          failed: integration.failed,
+          remaining: integration.remaining,
+        },
+      });
+      if (integration.failed) {
+        // A check failure leaves the merge applied on the target branch (so
+        // the failing state is inspectable); a failed merge is rolled back,
+        // leaving the branch fully unmerged. Word the report accordingly —
+        // the detailed reason above carries git's own output.
+        const failedNote = integration.failed.applied
+          ? `The failing merge of ${integration.failed.branch} is still applied on ${targetBranch} — inspect or revert it (resume will NOT re-merge or re-check it).`
+          : `${integration.failed.branch} was not merged (the merge was rolled back) — resolve manually.`;
+        const remainingNote =
+          integration.remaining.length > 0
+            ? ` Remaining unmerged: ${integration.remaining.join(", ")}.`
+            : "";
+        return failRun(
+          session,
+          run,
+          `ghcp-maestro/${runId}: write mode: integration stopped at "${integration.failed.agent}" — ${integration.failed.reason}. Merged: ${integration.merged.length > 0 ? integration.merged.join(", ") : "(none)"}. ${failedNote}${remainingNote} (worktrees kept under ${join(run.runDir, "worktrees")})`,
+          tokensPatch(),
+        );
+      }
+      await session.log(
+        `ghcp-maestro/${runId}: integration complete — ${integration.merged.length} branch(es) merged into ${targetBranch}; worktrees removed: ${cleanup.removed.length}`,
       );
     }
 
