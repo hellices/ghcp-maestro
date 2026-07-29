@@ -33,6 +33,18 @@ test("parseComposeArgs splits description, --name, and --force", () => {
     force: false,
   });
   assert.deepEqual(parseComposeArgs(""), { description: "", force: false });
+  // --name without a usable value must not swallow the next flag or silently
+  // fall back to the slug — an empty name fails validation with a clear warning
+  assert.deepEqual(parseComposeArgs("do things --name"), {
+    description: "do things",
+    name: "",
+    force: false,
+  });
+  assert.deepEqual(parseComposeArgs("do things --name --force"), {
+    description: "do things",
+    name: "",
+    force: true,
+  });
 });
 
 // ── slugifyWorkflowName ─────────────────────────────────────────────────────
@@ -57,6 +69,9 @@ test("extractWorkflowCode takes the largest fenced block", () => {
     "Notes: `short` inline.",
   ].join("\n");
   assert.match(extractWorkflowCode(text), /^export default async function/);
+  // sloppy fences (language tag + trailing space, uppercase, "javascript")
+  const sloppy = "```JavaScript \nexport default async function run() {}\n```";
+  assert.match(extractWorkflowCode(sloppy), /^export default/);
 });
 
 test("extractWorkflowCode accepts a bare module and rejects prose", () => {

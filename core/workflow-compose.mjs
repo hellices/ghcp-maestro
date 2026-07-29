@@ -43,9 +43,15 @@ export function parseComposeArgs(raw) {
   for (let i = 0; i < tokens.length; i += 1) {
     if (tokens[i] === "--force") {
       force = true;
-    } else if (tokens[i] === "--name" && i + 1 < tokens.length) {
-      name = tokens[i + 1];
-      i += 1;
+    } else if (tokens[i] === "--name") {
+      // A missing or flag-valued name is kept as "" so validateWorkflowName
+      // reports it clearly instead of silently falling back to the slug.
+      if (i + 1 < tokens.length && !tokens[i + 1].startsWith("--")) {
+        name = tokens[i + 1];
+        i += 1;
+      } else {
+        name = "";
+      }
     } else {
       rest.push(tokens[i]);
     }
@@ -128,7 +134,9 @@ export function buildComposePrompt({ description, name }) {
  */
 export function extractWorkflowCode(text) {
   const raw = String(text ?? "");
-  const blocks = [...raw.matchAll(/```[a-z]*\r?\n([\s\S]*?)```/gi)].map((m) => m[1].trim());
+  // Tolerate anything after the opening fence (language tag, trailing
+  // spaces, "js " etc.) — planners are not consistent here.
+  const blocks = [...raw.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1].trim());
   const best = blocks.sort((a, b) => b.length - a.length)[0];
   if (best) return best;
   const trimmed = raw.trim();
