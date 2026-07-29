@@ -203,39 +203,105 @@ function defaultChoiceParser(text, drafts) {
 // ── fixLoop ──────────────────────────────────────────────────────────────────
 
 /**
- * Repeatedly run `check`; while it fails, dispatch a fix agent and re-check,
- * up to `maxIters` iterations. `check` and `applyFix` are caller-supplied so
- * the loop stays agnostic about how building/testing/patching actually happen.
+ * Repeatedly run `check`; while the loop hasn't converged, dispatch a fix
+ * agent and re-check, up to `maxIters` iterations. `check` and `applyFix` are
+ * caller-supplied so the loop stays agnostic about how building/testing/
+ * patching actually happen.
+ *
+ * Convergence (#18): by default the loop stops when `check` reports ok. When
+ * an `until` predicate is supplied it becomes the authoritative stop
+ * condition — an externally checkable criterion (a test command exiting 0, an
+ * artifact existing) that users can trust over "the agents said it's done".
+ * Its `evidence` string is recorded in the history and the return value so
+ * the caller can cite why the loop stopped. `stallRounds` stops the loop when
+ * that many consecutive failing rounds produce an identical check report (no
+ * observable progress).
  *
  * @param {{
  *   adapter?: import("./spawn.mjs").SubagentAdapter,
  *   maxIters?: number,
+ *   stallRounds?: number,
  *   signal?: AbortSignal,
  *   runHandle?: object,
  *   check: (iteration: number) => Promise<{ ok: boolean, report?: string }>,
+ *   until?: (iteration: number, check: { ok: boolean, report?: string }) => Promise<{ done: boolean, evidence?: string }> | { done: boolean, evidence?: string },
  *   buildFixPrompt?: (report: string, iteration: number) => string,
  *   applyFix?: (agentResult: object, iteration: number) => Promise<void> | void,
  *   spawn?: Function,
  * }} opts
- * @returns {Promise<{ ok: boolean, iterations: number, history: Array<object> }>}
+ * @returns {Promise<{ ok: boolean, iterations: number, history: Array<object>, stopReason: "converged" | "stalled" | "max-iters", evidence?: string }>}
  */
 export async function fixLoop(opts) {
   if (typeof opts?.check !== "function") {
     throw new TypeError("fixLoop: opts.check must be a function");
   }
+  if (opts.until !== undefined && typeof opts.until !== "function") {
+    throw new TypeError("fixLoop: opts.until must be a function when provided");
+  }
   const maxIters = clampPositiveInt(opts.maxIters, 5, "maxIters");
+  // 0 = stall detection disabled (the default).
+  const stallRounds = clampNonNegativeInt(opts.stallRounds, 0, "stallRounds");
   const buildFixPrompt = opts.buildFixPrompt ?? defaultFixPrompt;
   const spawn = opts.spawn ?? defaultSpawn;
   const history = [];
+  let lastReport;
+  let stallCount = 0;
+  // Latest evidence observed across all rounds — the returned `evidence` is
+  // always the last one `until` produced, even if the final round emitted none.
+  let lastEvidence;
 
   for (let i = 0; i < maxIters; i += 1) {
     if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("aborted");
     const result = await opts.check(i);
-    history.push({ iteration: i, ...result });
-    if (result.ok) {
-      return { ok: true, iterations: i + 1, history };
+    const entry = { iteration: i, ...result };
+    // Convergence test: `until` when supplied (external criterion), otherwise
+    // the check's own ok flag. `until` sees the check result so a single
+    // predicate can combine both signals.
+    let converged;
+    if (opts.until) {
+      const verdict = await opts.until(i, result);
+      converged = verdict?.done === true;
+      if (verdict?.evidence !== undefined) {
+        lastEvidence = String(verdict.evidence);
+        entry.evidence = lastEvidence;
+      }
+    } else {
+      converged = result.ok === true;
     }
-    // Not clean yet — attempt a fix unless this was the final allowed iteration.
+    history.push(entry);
+    if (converged) {
+      return {
+        ok: true,
+        iterations: i + 1,
+        history,
+        stopReason: "converged",
+        ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
+      };
+    }
+    // Stall detection: a failing round whose report is byte-identical to the
+    // previous one made no observable progress. Reset on any change so slow
+    // but real progress never trips it. Rounds without a report are skipped —
+    // there is nothing observable to compare, so they never advance the counter.
+    if (stallRounds > 0) {
+      const report = result.report;
+      if (report == null) {
+        stallCount = 0;
+        lastReport = undefined;
+      } else {
+        stallCount = report === lastReport ? stallCount + 1 : 0;
+        lastReport = report;
+        if (stallCount >= stallRounds) {
+          return {
+            ok: false,
+            iterations: i + 1,
+            history,
+            stopReason: "stalled",
+            ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
+          };
+        }
+      }
+    }
+    // Not converged yet — attempt a fix unless this was the final allowed iteration.
     if (i === maxIters - 1) break;
     if (opts.adapter) {
       const fixResult = await spawn(
@@ -251,7 +317,13 @@ export async function fixLoop(opts) {
       await opts.applyFix?.(null, i);
     }
   }
-  return { ok: false, iterations: history.length, history };
+  return {
+    ok: false,
+    iterations: history.length,
+    history,
+    stopReason: "max-iters",
+    ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
+  };
 }
 
 function defaultFixPrompt(report, iteration) {
@@ -419,6 +491,14 @@ function clampPositiveInt(value, fallback, name) {
   if (value === undefined) return fallback;
   if (!Number.isInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive integer (got ${value})`);
+  }
+  return value;
+}
+
+function clampNonNegativeInt(value, fallback, name) {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative integer (got ${value})`);
   }
   return value;
 }
