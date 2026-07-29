@@ -105,6 +105,12 @@ test("scanForbiddenGlobals flags escapes but not prompt text", () => {
   // `global` is forbidden too — otherwise global['process'] (the string is
   // stripped by the literal walker) would be a trivial bypass
   assert.ok(scanForbiddenGlobals("const p = global['pro' + 'cess'];").length > 0);
+  // a `}` inside a regex literal must not close the `${...}` interpolation
+  // early and swallow the rest of it
+  assert.ok(scanForbiddenGlobals("const x = `${/}/.test(0) && process.exit(1)}`;").length > 0);
+  // ...while division stays division and regex patterns stay unscanned
+  assert.equal(scanForbiddenGlobals("const y = a / b / c;").length, 0);
+  assert.equal(scanForbiddenGlobals("const r = /process/; r.test(s);").length, 0);
 });
 
 // ── buildComposePrompt ──────────────────────────────────────────────────────

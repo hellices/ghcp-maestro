@@ -145,10 +145,14 @@ export function extractWorkflowCode(text) {
 }
 
 /**
- * Strip string literals and comments so the forbidden-global scan doesn't
- * flag words like "process" inside agent prompts. Template-literal
+ * Strip string literals, comments, and regex literals so the forbidden-global
+ * scan doesn't flag words like "process" inside agent prompts. Template-literal
  * interpolations (`${...}`) are KEPT — code hidden inside them must still be
  * scanned. Plain character walk; no regex backtracking.
+ *
+ * A `/` opens a regex literal only when the previous significant character
+ * cannot end an expression (so `a / b` stays division). Misclassifying a
+ * regex as division only ADDS text to the scan — fail-closed for this use.
  *
  * @param {string} code
  * @returns {string}
@@ -157,9 +161,14 @@ export function stripLiterals(code) {
   let out = "";
   let i = 0;
   const n = code.length;
-  // state: none | sq | dq | tpl | line | block; tplDepth counts ${ } nesting
+  // state: none | sq | dq | tpl | line | block | regex | regexClass;
+  // tplDepth counts ${ } nesting
   let state = "none";
   const tplExprDepth = [];
+  const regexCanFollow = (s) => {
+    const prev = s.replace(/\s+$/, "").slice(-1);
+    return prev === "" || "(,=:[!&|?{};+-*%<>~^".includes(prev);
+  };
   while (i < n) {
     const c = code[i];
     const next = code[i + 1];
@@ -169,6 +178,7 @@ export function stripLiterals(code) {
       else if (c === "`") state = "tpl";
       else if (c === "/" && next === "/") { state = "line"; i += 1; }
       else if (c === "/" && next === "*") { state = "block"; i += 1; }
+      else if (c === "/" && regexCanFollow(out)) state = "regex";
       else {
         out += c;
         if (c === "}" && tplExprDepth.length > 0) {
@@ -197,6 +207,13 @@ export function stripLiterals(code) {
         state = "none";
         i += 1;
       }
+    } else if (state === "regex") {
+      if (c === "\\") i += 1;
+      else if (c === "[") state = "regexClass";
+      else if (c === "/" || c === "\n") state = "none";
+    } else if (state === "regexClass") {
+      if (c === "\\") i += 1;
+      else if (c === "]") state = "regex";
     } else if (state === "line") {
       if (c === "\n") { state = "none"; out += "\n"; }
     } else if (state === "block") {
