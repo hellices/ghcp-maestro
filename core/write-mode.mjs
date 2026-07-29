@@ -177,6 +177,7 @@ export async function createWorktrees(specs, opts) {
     const branch = `maestro/${opts.runId}/${spec.agent}`;
     const dir = join(opts.root, spec.agent);
     let fresh = true;
+    let createdDir = true;
     try {
       await exec(["worktree", "add", dir, "-b", branch], { cwd: opts.cwd });
     } catch (err) {
@@ -196,6 +197,9 @@ export async function createWorktrees(specs, opts) {
             await rollbackWorktrees(exec, created, opts.cwd);
             throw err2;
           }
+          // A reused directory may hold uncommitted agent output from the
+          // previous attempt — rollback must never remove it.
+          createdDir = false;
         }
       } else {
         // Roll back the fresh worktrees added so far — a partial set must not
@@ -204,7 +208,7 @@ export async function createWorktrees(specs, opts) {
         throw err;
       }
     }
-    created.push({ agent: spec.agent, dir, branch, fresh });
+    created.push({ agent: spec.agent, dir, branch, fresh, createdDir });
   }
   return created.map(({ agent, dir, branch }) => ({ agent, dir, branch }));
 }
@@ -220,12 +224,15 @@ async function isWorktreeOnBranch(exec, dir, branch, cwd) {
 }
 
 /**
- * Best-effort removal of just-created worktrees. A branch is deleted only
- * when this run created it (`fresh`) — resume branches carry prior run state
- * and must always survive.
+ * Best-effort removal of just-created worktrees. Only directories this run
+ * itself created are removed (a reused surviving worktree may hold
+ * uncommitted agent output), and a branch is deleted only when this run
+ * created it (`fresh`) — resume branches carry prior run state and must
+ * always survive.
  */
 async function rollbackWorktrees(exec, created, cwd) {
   for (const wt of created) {
+    if (!wt.createdDir) continue;
     try {
       await exec(["worktree", "remove", wt.dir], { cwd });
       if (wt.fresh) await exec(["branch", "-D", wt.branch], { cwd });
