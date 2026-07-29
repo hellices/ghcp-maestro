@@ -330,6 +330,38 @@ test("createWorktrees creates the root directory before adding worktrees", async
   assert.deepEqual(made, ["/data/run1/worktrees"]);
 });
 
+test("createWorktrees reuses a dir-exists worktree already on the branch (no branch-exists error)", async () => {
+  const dir = join("/data/run1/worktrees", "api");
+  const exec = async (args) => {
+    if (args[0] === "worktree" && args[1] === "add") {
+      throw new Error(`fatal: '${dir}' already exists`);
+    }
+    if (args[0] === "-C") return { stdout: "maestro/run1/api\n", stderr: "" };
+    return { stdout: "", stderr: "" };
+  };
+  const result = await createWorktrees([{ agent: "api" }], {
+    exec,
+    root: "/data/run1/worktrees",
+    runId: "run1",
+  });
+  assert.deepEqual(result, [{ agent: "api", dir, branch: "maestro/run1/api" }]);
+});
+
+test("createWorktrees throws the dir-exists error when the surviving dir is on another branch", async () => {
+  const exec = async (args) => {
+    if (args[0] === "worktree" && args[1] === "add") {
+      throw new Error("fatal: '/data/run1/worktrees/api' already exists");
+    }
+    if (args[0] === "-C") return { stdout: "some/other-branch\n", stderr: "" };
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    () =>
+      createWorktrees([{ agent: "api" }], { exec, root: "/data/run1/worktrees", runId: "run1" }),
+    /already exists/,
+  );
+});
+
 test("createWorktrees propagates unrelated git failures", async () => {
   const exec = async () => {
     throw new Error("fatal: disk full");

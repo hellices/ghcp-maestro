@@ -207,8 +207,9 @@ export async function createWorktrees(specs, opts) {
     try {
       await exec(["worktree", "add", dir, "-b", branch], { cwd: opts.cwd });
     } catch (err) {
-      // Resume path: the branch survives from the previous attempt — reattach.
-      if (/already exists/i.test(err?.message ?? "")) {
+      const msg = String(err?.message ?? "");
+      if (/branch named .* already exists/i.test(msg)) {
+        // Resume path: the branch survives from the previous attempt — reattach.
         fresh = false;
         try {
           await exec(["worktree", "add", dir, branch], { cwd: opts.cwd });
@@ -227,6 +228,15 @@ export async function createWorktrees(specs, opts) {
           // previous attempt — rollback must never remove it.
           createdDir = false;
         }
+      } else if (
+        /already exists/i.test(msg) &&
+        (await isWorktreeOnBranch(exec, dir, branch, opts.cwd))
+      ) {
+        // Directory-exists case (git uses the same "already exists" wording
+        // for a pre-existing path): reuse only when the surviving directory
+        // is already a worktree on the expected branch.
+        fresh = false;
+        createdDir = false;
       } else {
         // Roll back the fresh worktrees added so far — a partial set must not
         // fan out, and stray worktrees would need manual cleanup otherwise.
