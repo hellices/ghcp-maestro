@@ -7,6 +7,31 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **Always-on token accounting.** Completed task runs log their total token
+  usage (`tokens=<used>[/limit]`) and persist `tokensUsed` in the run
+  manifest (budget-stopped runs too); `/maestros` shows `tokens=<n>` per run.
+  Enforcement stays opt-in via `GHCP_MAESTRO_BUDGET_TOKENS` — accounting
+  always-on, spend caps only when explicitly configured.
+- **Cross-agent prompt-injection hardening.** Dependency outputs
+  (`augmentPromptWithDeps`) and the synth digest (`buildSynthPrompt`) are now
+  fenced in `<<<UNTRUSTED-AGENT-OUTPUT>>>` sentinels with an explicit
+  treat-as-data instruction, per OWASP Agentic Security guidance — agent
+  output is data, not instructions. Always-on, zero token cost. (#33)
+- **Opt-in per-label model routing.** New `core/model-routes.mjs`:
+  `GHCP_MAESTRO_MODEL_ROUTES` (or `opts.modelRoutes`) maps label patterns
+  (`plan`, `explore:<agent>`, `verify`, `synth`; `*` wildcards,
+  first-match-wins) to models so fan-out workers can run on cheaper models
+  than the planner/synth. No routes → adapter default, specs unchanged. (#17)
+- **Opt-in verify phase.** `GHCP_MAESTRO_VERIFY=1` (or `opts.verify`) inserts
+  a verification agent between explore and synth that judges each subtask
+  output against the *original task objective* (met / partially-met /
+  not-met + gaps, MAST-style); the report feeds the synth prompt. Verify
+  failure is non-fatal. Off by default — one extra agent per run. (#31)
+- **OTel GenAI-style trace export.** New `core/trace.mjs` + `writeRunTrace`
+  in `run-flow.mjs`: every terminal run (complete / stopped / error) writes
+  `trace.json` — an `invoke_workflow` root span plus `invoke_agent` child
+  spans with `gen_ai.*` semantic-convention attributes. Always-on, zero deps,
+  best-effort (never fails a run). (#32)
 - **Release polish.** New `docs/DEMO.md` — a five-minute end-to-end
   `/maestro task` walkthrough with real log-line formats (install → plan gate
   → parallel explore + `/maestros` dashboard → synth → resume/stop). READMEs

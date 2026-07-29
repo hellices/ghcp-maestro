@@ -160,6 +160,258 @@ test("task workflow soft-stops before synth when the token budget is exceeded", 
   });
 });
 
+// --- Model routing (#17) ------------------------------------------------------
+
+test("task workflow routes per-label models to agent specs when routes are set", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const models = [];
+    const adapter = {
+      name: "route-spy",
+      async invoke(spec) {
+        models.push(`${spec.agent}=${spec.model ?? "(default)"}`);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", {
+      modelRoutes: { "explore:*": "fast-model", synth: "premium-model" },
+    });
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(models.includes("plan=(default)"), "unrouted label keeps the adapter default");
+    assert.ok(models.includes("a=fast-model"));
+    assert.ok(models.includes("b=fast-model"));
+    assert.ok(models.includes("c=fast-model"));
+    assert.ok(models.includes("synth=premium-model"));
+    assert.ok(session.logs.some((l) => /model routes: .*fast-model/.test(l)));
+  });
+});
+
+test("task workflow reads model routes from GHCP_MAESTRO_MODEL_ROUTES", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const models = [];
+    const adapter = {
+      name: "route-spy",
+      async invoke(spec) {
+        models.push(spec.model);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => adapter,
+      env: { GHCP_MAESTRO_MODEL_ROUTES: '{"*":"everywhere-model"}' },
+    });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(models.every((m) => m === "everywhere-model"));
+  });
+});
+
+test("task workflow leaves spec.model unset when no routes are configured", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const sawModelKey = [];
+    const adapter = {
+      name: "route-spy",
+      async invoke(spec) {
+        sawModelKey.push("model" in spec);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(sawModelKey.every((k) => k === false), "specs must not grow a model key by default");
+  });
+});
+
+// --- Verify phase (#31) --------------------------------------------------------
+
+test("task workflow runs the verify phase when opted in and feeds synth the report", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const prompts = {};
+    const adapter = {
+      name: "verify-spy",
+      async invoke(spec) {
+        prompts[spec.agent] = spec.prompt;
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        if (spec.agent === "verify") return { text: "OVERALL: 3/3 subtasks met the objective" };
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", { verify: true });
+    assert.equal(run.manifest.status, "complete");
+    assert.ok(prompts.verify, "verify agent must run");
+    assert.match(prompts.verify, /verification agent/);
+    assert.match(prompts.synth, /OVERALL: 3\/3 subtasks met the objective/);
+    assert.ok(session.logs.some((l) => /phase=verify agents=1/.test(l)));
+    assert.ok(session.logs.some((l) => /VERIFY REPORT/.test(l)));
+    assert.ok(
+      session.logs.some((l) => /complete — 6 agents across 4 phases .*\+ verify \+ synth/.test(l)),
+    );
+  });
+});
+
+test("task workflow skips verify by default and via env opts in", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const agents = [];
+    const adapter = () => ({
+      name: "spy",
+      async invoke(spec) {
+        agents.push(spec.agent);
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: "out" };
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: adapter });
+    await runTaskWorkflow(session, "do the thing");
+    assert.ok(!agents.includes("verify"), "verify must be opt-in");
+
+    agents.length = 0;
+    const { runTaskWorkflow: withEnv } = createBuiltinWorkflows({
+      getAdapter: adapter,
+      env: { GHCP_MAESTRO_VERIFY: "1" },
+    });
+    await withEnv(session, "do the thing");
+    assert.ok(agents.includes("verify"), "GHCP_MAESTRO_VERIFY must enable verify");
+  });
+});
+
+test("task workflow survives a failed verify agent and synthesizes without a report", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let synthPrompt = "";
+    const adapter = {
+      name: "verify-fail",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        if (spec.agent === "verify") throw new Error("verify blew up");
+        if (spec.agent === "synth") {
+          synthPrompt = spec.prompt;
+          return { text: "final" };
+        }
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing", { verify: true });
+    assert.equal(run.manifest.status, "complete");
+    assert.doesNotMatch(synthPrompt, /verification agent independently judged/);
+    assert.ok(
+      session.logs.some((l) => /verify agent error: .*continuing to synth/.test(l)),
+      "verify failure must be logged as a warning",
+    );
+    assert.ok(session.logs.some((l) => /complete — 5 agents across 3 phases/.test(l)));
+  });
+});
+
+// --- Trace export (#32) --------------------------------------------------------
+
+test("task workflow writes an OTel GenAI-style trace.json at completion", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const trace = JSON.parse(await readFile(join(run.runDir, "trace.json"), "utf8"));
+    assert.ok(trace.traceId);
+    const root = trace.spans[0];
+    assert.equal(root.attributes["gen_ai.operation.name"], "invoke_workflow");
+    assert.equal(root.attributes["gen_ai.conversation.id"], run.runId);
+    // plan + 3 explore + synth agent spans under the root.
+    const agentSpans = trace.spans.filter(
+      (s) => s.attributes["gen_ai.operation.name"] === "invoke_agent",
+    );
+    assert.equal(agentSpans.length, 5);
+    assert.ok(agentSpans.every((s) => s.parentSpanId === root.spanId));
+  });
+});
+
+test("task workflow reports and persists token usage even without a budget", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    // Every agent reports 1000 tokens but no budget is set: nothing is skipped,
+    // the run completes, and the aggregate is still reported and persisted.
+    const adapter = {
+      name: "tokens",
+      async invoke(spec, ctx) {
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "complete");
+    // 5 agents (plan + 3 explore + synth) × 1000 tokens each.
+    assert.equal(run.manifest.tokensUsed, 5000);
+    assert.ok(session.logs.some((l) => /task workflow complete —.*tokens=5000(?!\/)/.test(l)));
+  });
+});
+
 // --- DAG plans (#21) ---------------------------------------------------------
 
 test("task workflow runs dependsOn subtasks in layers with augmented prompts", async () => {
