@@ -360,7 +360,7 @@ test("integrateBranches aborts the conflicted merge and reports the remainder", 
   );
   assert.deepEqual(result.merged, ["maestro/r/a"]);
   assert.equal(result.failed.agent, "b");
-  assert.match(result.failed.reason, /merge conflict/i);
+  assert.match(result.failed.reason, /merge failed: .*CONFLICT/i);
   assert.equal(result.failed.applied, false);
   assert.deepEqual(result.remaining, ["maestro/r/c"]);
   // The half-applied merge was aborted, and c was never attempted.

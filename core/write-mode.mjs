@@ -327,7 +327,7 @@ export async function integrateBranches(branches, opts) {
       }
       return {
         merged,
-        failed: { agent, branch, reason: `merge conflict: ${err?.message ?? err}`, applied: false },
+        failed: { agent, branch, reason: `merge failed: ${err?.message ?? err}`, applied: false },
         remaining: branches.slice(i + 1).map((b) => b.branch),
       };
     }
