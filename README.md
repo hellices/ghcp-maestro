@@ -60,12 +60,6 @@ manual turns. A few examples:
 /maestro task Audit every route under src/api for missing authentication or input validation, and list each gap with the file and a suggested fix
 ```
 
-**Large migration / refactor planning** — break a daunting change into a
-coordinated set of angles.
-```text
-/maestro task Plan migrating our REST API to GraphQL: schema design, resolver structure, auth, pagination, and a phased rollout with risks
-```
-
 **Cross-checked research** — gather findings from several independent angles and
 keep only what survives scrutiny.
 ```text
@@ -84,13 +78,9 @@ at once.
 ```
 
 **Repeatable workflows** — once a procedure works, save it as a script and rerun
-it as its own command (e.g. a deep code review you run on every branch):
+it as its own command, or install someone else's straight from GitHub:
 ```text
 /maestro run deep-review {"topic": "the diff on this branch"}
-```
-
-**Share workflows** — install someone else's workflow straight from GitHub:
-```text
 /maestro install acme/flows/workflows/security-audit.mjs@v1
 ```
 
@@ -112,174 +102,32 @@ it as its own command (e.g. a deep code review you run on every branch):
 
 ---
 
-## Features
+## Features at a glance
 
-**Automatic task decomposition.**
-`/maestro task <natural language>` asks a `plan` agent to break the task into
-3–6 independent subtasks — you describe the goal, it figures out the pieces.
-Plans may declare `dependsOn` between subtasks: dependents run in a later
-wave with their dependencies' outputs injected into the prompt, and if a
-dependency fails its dependents are skipped instead of running blind.
+- **Automatic task decomposition** — a `plan` agent splits the task into 3–6
+  subtasks, with optional `dependsOn` waves between them.
+- **Real parallel fan-out with isolation** — every subtask gets its own child
+  Copilot session and a fresh context window; wall-clock ≈ slowest subtask.
+- **Pre-approval gate** — review the plan, run a subset, or abort before any
+  expensive fan-out starts.
+- **Cost visibility + opt-in token budget** — run-size estimate at the gate,
+  always-on token accounting, `GHCP_MAESTRO_BUDGET_TOKENS` soft-stop.
+- **Model routing (opt-in)** — route workers to cheaper models than the
+  planner/synth via `GHCP_MAESTRO_MODEL_ROUTES`.
+- **Verify phase (opt-in)** — `GHCP_MAESTRO_VERIFY=1` judges each subtask
+  against the objective before synthesis.
+- **Result synthesis** — cross-checked final answer with failed subtasks
+  disclosed (`coverage: 4/5 subtasks ok`).
+- **Persistence & resume** — every run is on disk; `/maestro-resume` reruns
+  only what's missing.
+- **Background runs + live dashboard** — `/maestros` shows per-agent progress
+  and token usage while you keep working.
+- **OTel GenAI-style trace export** — best-effort `trace.json` per finished run.
+- **Saved workflows & quality helpers** — sandboxed workflow scripts,
+  `adversarialReview` / `multiAngle` / `fixLoop` / `crossCheck`.
 
-**Real parallel fan-out with isolation.**
-Each subtask runs in its own child Copilot session, concurrently (default 16 at
-a time, hard cap 1000). The host conversation stays clean, every subtask gets a
-fresh context window, and the wall-clock time collapses to roughly the slowest
-single subtask instead of their sum. Each agent has a generous timeout
-(10 minutes by default — raise `GHCP_MAESTRO_TIMEOUT_MS` for very long research
-runs), and transient failures (API blips, rate limits) retry automatically with
-exponential backoff.
-
-**Pre-approval before fan-out.**
-On an interactive host, ghcp-maestro pauses after planning to show the subtask
-list with prompt previews. Approve everything, run only a subset, or abort —
-before any of the expensive parallel work starts.
-
-**Cost visibility and a token budget.**
-Before fan-out the gate shows a run-size estimate, and runs of
-`GHCP_MAESTRO_LARGE_RUN_AGENTS` or more subtasks (default 5) get an explicit
-warning. Token accounting is always on for the task workflow: when the
-workflow itself ends a run (complete, budget soft-stop, or failure) it records
-the total token usage in the run manifest, so `/maestros` shows per-run cost
-(a manual `/maestro-stop` on a still-running run may not have a final total).
-Enforcement is opt-in — set `GHCP_MAESTRO_BUDGET_TOKENS=<n>`
-(`500k` / `2m` shorthand works) to cap a run: once the cap is hit, in-flight
-agents finish, un-started agents are skipped, and the run is soft-stopped —
-resumable later with `/maestro-resume`. `/maestros` shows live per-agent and
-total token usage.
-
-**Model routing (opt-in).**
-Worker agents doing mechanical subtasks rarely need the same model as the
-planner or the synth phase. Set `GHCP_MAESTRO_MODEL_ROUTES` to a JSON map from
-label pattern to model — labels are `plan`, `explore:<agent>`, `verify`,
-`synth`; `*` wildcards, first match wins:
-
-```
-GHCP_MAESTRO_MODEL_ROUTES='{"explore:*":"gpt-5-mini","synth":"claude-sonnet-4.5"}'
-```
-
-Unmatched labels (and no routes at all — the default) fall back to the child
-session's default model.
-
-**Verification before synthesis (opt-in).**
-Set `GHCP_MAESTRO_VERIFY=1` to insert a verify phase between fan-out and
-synthesis: one extra agent judges each subtask output against the original
-task objective (met / partially-met / not-met, with concrete gaps) and the
-report is fed to the synth agent so unverified claims aren't presented as
-settled facts. Off by default — it costs one extra agent per run. A failed
-verify agent never fails the run; synthesis proceeds without the report.
-
-**Result synthesis.**
-A `synth` agent cross-checks every subtask output and merges them into a final
-answer plus suggested next actions. Failed subtasks are disclosed, not hidden:
-the synth prompt marks them `(FAILED: <status>)` and instructs the agent to
-state which angles are missing, and the final output includes a coverage line
-(`coverage: 4/5 subtasks ok (1 timeout)`).
-
-**Persistence and resume.**
-Every run is saved to disk. `/maestro-resume <runId>` replays it: already
-finished agents are served from cache, only the missing or failed ones rerun.
-
-**Background runs you can watch.**
-`/maestro task|brainstorm|run` kick off in the background, so the session stays
-free while agents fan out. Run `/maestros` to list runs with a live progress
-summary, or `/maestros <runId>` for the full per-agent dashboard.
-
-**OTel GenAI-style trace export.**
-Every run that reaches a terminal state (complete / stopped / error) writes a
-`trace.json` next to its manifest (best-effort — a trace write failure is
-swallowed and never fails the run): one `invoke_workflow` root span plus an
-`invoke_agent` span per agent, using OpenTelemetry GenAI semantic-convention
-attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`,
-`gen_ai.conversation.id`, `gen_ai.usage.total_tokens`, `error.type`). It is an
-OTel-style JSON document, not a full OTLP payload — post-process it into a
-real exporter if you need one. (The upstream GenAI conventions are still in
-Development status, so attribute names may drift.)
-
-**Brainstorming.**
-`/maestro brainstorm <topic>` fans out several perspective-specific agents in
-parallel, then synthesizes across the perspectives.
-
-**Saved workflows.**
-Capture a repeatable multi-step procedure as a small workflow script and run it
-with `/maestro run <name>`. Scripts only ever touch a sandboxed API
-(`spawn`/`spawnAll`/`phase` plus the quality helpers) — never the filesystem,
-shell, or SDK directly.
-
-**Quality helpers.**
-Reusable multi-agent patterns for workflow authors: `adversarialReview`
-(reviewers try to rebut each finding), `multiAngle` (draft from several angles,
-then judge), `fixLoop` (retry until a check passes), and `crossCheck` (verify a
-claim across multiple sources).
-
----
-
-## Configuration
-
-Everything is tuned through environment variables — visibility features are
-always on, and everything that spends extra tokens is opt-in. (Diagnostic
-probe knobs — `GHCP_MAESTRO_PROBE_*`, `GHCP_MAESTRO_TIMEOUT_PROBE_MS` — are
-intentionally omitted here.)
-
-| Variable | Default | What it does |
-| :-- | :-- | :-- |
-| `GHCP_MAESTRO_AUTO_APPROVE` | off | Skip the plan approval gate; always run every subtask |
-| `GHCP_MAESTRO_BUDGET_TOKENS` | unlimited | Token cap per run attempt (`500k` / `2m` shorthand); soft-stops the run when hit |
-| `GHCP_MAESTRO_MODEL_ROUTES` | none | JSON map of agent label → model (`plan`, `explore:<agent>`, `verify`, `synth`; `*` wildcards) |
-| `GHCP_MAESTRO_VERIFY` | off | Insert a verify phase between fan-out and synthesis (one extra agent per run) |
-| `GHCP_MAESTRO_TIMEOUT_MS` | `600000` (10 min) | Per-agent timeout |
-| `GHCP_MAESTRO_RETRIES` | `1` | Automatic retries for transient agent failures (`0` disables) |
-| `GHCP_MAESTRO_LARGE_RUN_AGENTS` | `5` | Subtask count that triggers the "large fan-out" warning at the gate |
-| `GHCP_MAESTRO_NO_MONITOR` | off | Disable live progress tracking |
-| `GHCP_MAESTRO_DATA_DIR` | `~/.copilot/plugin-data/ghcp-maestro` | Where run state (manifests, agent outputs, traces) is stored |
-| `GHCP_MAESTRO_WORKFLOWS_DIR` | `<cwd>/.ghcp-maestro/workflows` | Project-level saved-workflows directory (highest priority) |
-
----
-
-## Install surfaces
-
-`/maestro` runs on two surfaces that **share one runtime core** (`core/*`, the
-`@ghcp-maestro/core` package) but are **installed and distributed
-separately**. The core is surface-agnostic; each surface is a thin adapter that
-implements the ports in
-[`core/ports.mjs`](core/ports.mjs)
-(`RuntimePort` / `UiSinkPort` / `LogPort` / `CancellationPort`).
-
-| Surface | Install | Run | UI |
-| :-- | :-- | :-- | :-- |
-| **GitHub Copilot CLI** | `copilot plugin install <repo>` | `copilot --experimental` | `/maestro` chat + `/maestros` text dashboard |
-| **VS Code** | install the `ghcp-maestro` extension (`.vsix` or Marketplace) | open VS Code Chat | `@maestro` / `/maestro` chat + **Maestro** Activity Bar (Runs tree + interactive Run Console) |
-
-Installing the CLI plugin does **not** install the VS Code extension (and vice
-versa) — they are different distribution channels. Only the runtime core is
-shared, so behavior and subcommands stay in lock-step.
-
-### VS Code surface
-
-The VS Code extension lives in [`vscode-extension/`](vscode-extension/). It adds:
-
-- a **chat participant** (`@maestro`) that mirrors the CLI subcommands
-  (`task`, `brainstorm`, `run`, `workflows`),
-- a **Runs** TreeView (run → phase → agent, with live status icons and a dense
-  `model · tokens · tools · time` line per agent), and
-- an interactive **Run Console** webview — a TUI-like, three-pane view
-  (Phases / Agents / Infrastructure) that streams live updates, lets you drill
-  into any agent's prompt, tool trace, and output, and retry a single agent — all
-  **inside VS Code**, no external browser.
-
-Because the VS Code extension host runs on its own Electron/Node runtime (not the
-Copilot binary), point the extension at the Copilot CLI so it can spawn isolated
-agent sessions:
-
-```jsonc
-// settings.json
-{
-  "maestro.copilotPath": "/absolute/path/to/copilot"
-}
-```
-
-Leave it empty to fall back to the `COPILOT_CLI_PATH` environment variable. Run
-logs stream to the **Maestro** output channel.
+The full tour — each feature in depth plus every `GHCP_MAESTRO_*` environment
+variable — lives in **[docs/GUIDE.md](docs/GUIDE.md)**.
 
 ---
 
@@ -304,7 +152,9 @@ logs stream to the **Maestro** output channel.
 
 ## Learn more
 
+- [docs/GUIDE.md](docs/GUIDE.md) — every feature in depth + the full configuration reference
 - [docs/DEMO.md](docs/DEMO.md) — a five-minute end-to-end walkthrough
+- [docs/SURFACES.md](docs/SURFACES.md) — CLI vs. VS Code install surfaces and the shared core
 - [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) — product vision and requirements
 - [docs/PLAN.md](docs/PLAN.md) — milestones and design decisions
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — release history

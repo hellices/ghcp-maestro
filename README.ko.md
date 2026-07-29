@@ -58,11 +58,6 @@ copilot --experimental
 /maestro task src/api 아래 모든 라우트에서 인증/입력 검증 누락을 감사하고, 파일과 수정안과 함께 각 항목을 정리해줘
 ```
 
-**대규모 마이그레이션/리팩터링 계획** — 막막한 변경을 여러 각도로 분담.
-```text
-/maestro task REST API 를 GraphQL 로 옮기는 계획: 스키마 설계, 리졸버 구조, 인증, 페이지네이션, 위험요소를 포함한 단계적 롤아웃
-```
-
 **교차 검증 리서치** — 독립된 여러 각도에서 모은 뒤 검증을 통과한 것만 남김.
 ```text
 /maestro task 쓰기 많은 멀티테넌트 SaaS 에 PostgreSQL/MySQL/SQLite 를 성능·운영·비용·마이그레이션 부담 기준으로 교차 비교해줘
@@ -78,14 +73,10 @@ copilot --experimental
 /maestro brainstorm 안정성을 해치지 않으면서 클라우드 비용을 줄이는 방법
 ```
 
-**반복 워크플로우** — 잘 동작하는 절차를 스크립트로 저장해 자체 명령으로 재실행
-(예: 브랜치마다 돌리는 심층 코드 리뷰):
+**반복 워크플로우** — 잘 동작하는 절차를 스크립트로 저장해 자체 명령으로
+재실행하거나, 다른 사람의 워크플로우를 GitHub 에서 바로 설치:
 ```text
 /maestro run deep-review {"topic": "이 브랜치의 diff"}
-```
-
-**워크플로우 공유** — 다른 사람의 워크플로우를 GitHub 에서 바로 설치:
-```text
 /maestro install acme/flows/workflows/security-audit.mjs@v1
 ```
 
@@ -107,120 +98,32 @@ copilot --experimental
 
 ---
 
-## 기능
+## 기능 한눈에 보기
 
-**작업 자동 분할.**
-`/maestro task <자연어>` 는 `plan` 에이전트에게 작업을 3–6 개의 독립적인 하위
-작업으로 쪼개게 한다 — 목표만 설명하면 조각은 알아서 나눈다. 계획은 하위 작업
-간 `dependsOn` 을 선언할 수 있다: 의존하는 작업은 다음 웨이브에서 의존 대상의
-출력이 프롬프트에 주입된 채 실행되고, 의존 대상이 실패하면 무작정 실행하는
-대신 건너뛴다.
+- **작업 자동 분할** — `plan` 에이전트가 3–6 개 하위 작업으로 분할, 하위 작업
+  간 `dependsOn` 웨이브 지원.
+- **격리된 진짜 병렬 fan-out** — 하위 작업마다 자기만의 child Copilot 세션과
+  새 컨텍스트 창; 전체 시간 ≈ 가장 느린 하나.
+- **사전 승인 게이트** — 비싼 fan-out 시작 전에 계획 검토 · 일부 선택 · 취소.
+- **비용 가시성 + opt-in 토큰 예산** — 게이트의 규모 추정, 항상 켜진 토큰 집계,
+  `GHCP_MAESTRO_BUDGET_TOKENS` soft-stop.
+- **모델 라우팅 (opt-in)** — `GHCP_MAESTRO_MODEL_ROUTES` 로 worker 를 더 싼
+  모델에 배정.
+- **검증 단계 (opt-in)** — `GHCP_MAESTRO_VERIFY=1` 로 종합 전에 각 하위 작업을
+  목표 기준으로 판정.
+- **결과 종합** — 교차 검증된 최종 답변, 실패한 하위 작업은 공개
+  (`coverage: 4/5 subtasks ok`).
+- **영속화 & 재실행** — 모든 run 디스크 저장; `/maestro-resume` 은 빠진 것만
+  재실행.
+- **백그라운드 실행 + 실시간 대시보드** — 작업하는 동안 `/maestros` 로
+  에이전트별 진행과 토큰 사용량 확인.
+- **OTel GenAI 스타일 trace 내보내기** — 종료된 run 마다 best-effort
+  `trace.json`.
+- **저장 워크플로우 & 품질 helper** — 샌드박스 워크플로우 스크립트,
+  `adversarialReview` / `multiAngle` / `fixLoop` / `crossCheck`.
 
-**격리된 진짜 병렬 fan-out.**
-각 하위 작업은 자기만의 child Copilot 세션에서 동시에 실행된다 (기본 16 개
-동시, 최대 1000). 호스트 대화는 깨끗하게 유지되고, 하위 작업마다 새 컨텍스트
-창을 쓰며, 전체 소요 시간은 하위 작업들의 합이 아니라 가장 느린 하나 정도로
-줄어든다. 에이전트별 타임아웃은 기본 10 분 (`GHCP_MAESTRO_TIMEOUT_MS` 로 연장
-가능)이고, 일시적 실패(API 오류, rate limit)는 지수 백오프로 자동 재시도한다.
-
-**fan-out 전 사전 승인.**
-대화형 환경에서는 계획 수립 후 잠시 멈춰, 하위 작업 목록과 프롬프트 미리보기를
-보여준다. 비싼 병렬 작업이 시작되기 전에 전체 승인 · 일부만 선택 · 취소 를
-고를 수 있다.
-
-**비용 가시성과 토큰 예산.**
-fan-out 전 게이트에 실행 규모 추정이 표시되고, 하위 작업이
-`GHCP_MAESTRO_LARGE_RUN_AGENTS` 개 이상(기본 5)이면 경고가 나온다. task
-워크플로우의 토큰 집계는 항상 켜져 있다: 워크플로우 스스로 run 을 종료하는
-경로(완료 · 예산 soft-stop · 실패)마다 총 토큰 사용량이 run 매니페스트에
-기록되어 `/maestros` 에서 run 별 비용을 볼 수 있다 (실행 중인 run 을 밖에서
-`/maestro-stop` 하면 최종 합계가 없을 수 있다). 상한 강제는 opt-in —
-`GHCP_MAESTRO_BUDGET_TOKENS=<n>` (`500k` / `2m` 축약 가능) 으로 run 상한을
-걸면, 상한 도달 시 진행 중 에이전트는 마무리하고, 아직 시작 안 한 에이전트는
-건너뛴 뒤 run 을 soft-stop 한다 — 나중에 `/maestro-resume` 으로 이어서 실행.
-`/maestros` 는 에이전트별 · 전체 토큰 사용량을 실시간으로 보여준다.
-
-**모델 라우팅 (opt-in).**
-기계적인 하위 작업을 처리하는 worker 에이전트가 planner 나 synth 와 같은 모델을
-쓸 필요는 거의 없다. `GHCP_MAESTRO_MODEL_ROUTES` 에 라벨 패턴 → 모델 JSON 맵을
-설정한다 — 라벨은 `plan`, `explore:<agent>`, `verify`, `synth`; `*` 와일드카드,
-첫 매치 우선:
-
-```
-GHCP_MAESTRO_MODEL_ROUTES='{"explore:*":"gpt-5-mini","synth":"claude-sonnet-4.5"}'
-```
-
-매치되지 않는 라벨(그리고 라우트가 아예 없는 기본 상태)은 child 세션의 기본
-모델을 쓴다.
-
-**종합 전 검증 (opt-in).**
-`GHCP_MAESTRO_VERIFY=1` 을 설정하면 fan-out 과 종합 사이에 검증 단계가 들어간다:
-에이전트 하나가 각 하위 작업 결과를 원래 목표 기준으로 판정하고
-(충족 / 부분 충족 / 미충족, 구체적인 결손 포함), 그 보고서가 synth 에이전트에
-전달되어 검증 안 된 주장이 확정 사실처럼 제시되지 않게 한다. 기본은 꺼짐 —
-run 당 에이전트 하나만큼 비용이 더 든다. 검증 에이전트가 실패해도 run 은
-실패하지 않는다; 보고서 없이 종합을 진행한다.
-
-**결과 종합.**
-`synth` 에이전트가 모든 하위 작업 결과를 교차 검증해 **최종 답변 + 다음 액션**
-으로 합친다. 실패한 하위 작업은 숨기지 않고 공개한다: synth 프롬프트에
-`(FAILED: <status>)` 로 표시되고 어떤 관점이 빠졌는지 명시하라는 지시가
-붙으며, 최종 출력에 커버리지 라인(`coverage: 4/5 subtasks ok (1 timeout)`)이
-포함된다.
-
-**영속화와 재실행.**
-모든 run 은 디스크에 저장된다. `/maestro-resume <runId>` 로 다시 실행하면 이미
-끝난 에이전트는 캐시에서 가져오고, 누락되거나 실패한 것만 다시 돌린다.
-
-**백그라운드 실행과 모니터링.**
-`/maestro task|brainstorm|run` 는 백그라운드로 시작돼, 에이전트가 fan-out 되는
-동안 세션은 계속 자유롭다. `/maestros` 로 실행 목록과 진행 요약을, `/maestros
-<runId>` 로 에이전트별 상세 대시보드를 본다.
-
-**OTel GenAI 스타일 trace 내보내기.**
-종료 상태(complete / stopped / error)에 도달한 모든 run 은 매니페스트 옆에
-`trace.json` 을 쓴다 (best-effort — IO 실패는 run 을 실패시키지 않고
-넘어간다): `invoke_workflow` 루트 span 하나 + 에이전트별
-`invoke_agent` span, OpenTelemetry GenAI 시맨틱 컨벤션 속성 이름
-(`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.conversation.id`,
-`gen_ai.usage.total_tokens`, `error.type`) 사용. OTel 스타일 JSON 문서이지
-완전한 OTLP 페이로드는 아니다 — 실제 exporter 가 필요하면 후처리할 것.
-(업스트림 GenAI 컨벤션은 아직 Development 상태라 속성 이름이 바뀔 수 있다.)
-
-**브레인스토밍.**
-`/maestro brainstorm <주제>` 는 여러 관점의 에이전트를 병렬로 펼친 뒤, 관점을
-가로질러 종합한다.
-
-**저장된 워크플로우.**
-반복되는 다단계 절차를 작은 워크플로우 스크립트로 저장해 `/maestro run <이름>`
-으로 실행한다. 스크립트는 샌드박스된 API (`spawn`/`spawnAll`/`phase` 와 품질
-helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 않는다.
-
-**품질 helper.**
-워크플로우 작성자를 위한 멀티 에이전트 패턴: `adversarialReview` (반론 검토),
-`multiAngle` (다관점 초안 후 심사), `fixLoop` (검사를 통과할 때까지 수정 반복),
-`crossCheck` (여러 출처로 주장 교차 검증).
-
----
-
-## 설정
-
-모든 튜닝은 환경 변수로 한다 — 가시성 기능은 항상 켜져 있고, 토큰을 추가로
-쓰는 것은 전부 opt-in 이다. (진단용 프로브 설정 — `GHCP_MAESTRO_PROBE_*`,
-`GHCP_MAESTRO_TIMEOUT_PROBE_MS` — 은 의도적으로 제외.)
-
-| 변수 | 기본값 | 역할 |
-| :-- | :-- | :-- |
-| `GHCP_MAESTRO_AUTO_APPROVE` | 꺼짐 | 계획 승인 게이트 생략; 항상 모든 하위 작업 실행 |
-| `GHCP_MAESTRO_BUDGET_TOKENS` | 무제한 | run 시도당 토큰 상한 (`500k` / `2m` 축약); 도달 시 soft-stop |
-| `GHCP_MAESTRO_MODEL_ROUTES` | 없음 | 에이전트 라벨 → 모델 JSON 맵 (`plan`, `explore:<agent>`, `verify`, `synth`; `*` 와일드카드) |
-| `GHCP_MAESTRO_VERIFY` | 꺼짐 | fan-out 과 종합 사이에 검증 단계 삽입 (run 당 에이전트 1개 추가) |
-| `GHCP_MAESTRO_TIMEOUT_MS` | `600000` (10분) | 에이전트별 타임아웃 |
-| `GHCP_MAESTRO_RETRIES` | `1` | 일시적 실패 자동 재시도 횟수 (`0` 이면 비활성) |
-| `GHCP_MAESTRO_LARGE_RUN_AGENTS` | `5` | 게이트에서 "large fan-out" 경고를 띄우는 하위 작업 수 |
-| `GHCP_MAESTRO_NO_MONITOR` | 꺼짐 | 실시간 진행 추적 끄기 |
-| `GHCP_MAESTRO_DATA_DIR` | `~/.copilot/plugin-data/ghcp-maestro` | run 상태(매니페스트, 에이전트 출력, trace) 저장 위치 |
-| `GHCP_MAESTRO_WORKFLOWS_DIR` | `<cwd>/.ghcp-maestro/workflows` | 프로젝트 저장 워크플로우 디렉터리 (최우선) |
+기능별 상세 설명과 전체 `GHCP_MAESTRO_*` 환경 변수 레퍼런스는
+**[docs/GUIDE.ko.md](docs/GUIDE.ko.md)** 에 있다.
 
 ---
 
@@ -244,7 +147,9 @@ helper) 만 사용하며, 파일시스템 · 셸 · SDK 에 직접 접근하지 
 
 ## 더 알아보기
 
+- [docs/GUIDE.ko.md](docs/GUIDE.ko.md) — 기능 상세 + 전체 설정 레퍼런스
 - [docs/DEMO.md](docs/DEMO.md) — 5분 end-to-end 워크스루
+- [docs/SURFACES.md](docs/SURFACES.md) — CLI vs. VS Code 설치 표면과 공유 코어
 - [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) — 제품 비전과 요구사항
 - [docs/PLAN.md](docs/PLAN.md) — 마일스톤과 설계 결정
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — 릴리스 이력
