@@ -161,6 +161,25 @@ test("validateDisjointScopes rejects absolute and escaping paths", () => {
   );
 });
 
+test("validateDisjointScopes catches overlap hidden by path variants (//, ./)", () => {
+  assert.throws(
+    () =>
+      validateDisjointScopes([
+        { agent: "a", files: ["src//api"] },
+        { agent: "b", files: ["src/api"] },
+      ]),
+    /overlapping file scopes/,
+  );
+  assert.throws(
+    () =>
+      validateDisjointScopes([
+        { agent: "a", files: ["src/./api/handler.mjs"] },
+        { agent: "b", files: ["src/api"] },
+      ]),
+    /overlapping file scopes/,
+  );
+});
+
 // --- createWorktrees --------------------------------------------------------
 
 test("createWorktrees adds a worktree + fresh branch per agent", async () => {
@@ -203,6 +222,48 @@ test("createWorktrees reattaches to an existing branch on resume", async () => {
     join("/data/run1/worktrees", "api"),
     "maestro/run1/api",
   ]);
+});
+
+test("createWorktrees reuses a surviving worktree already on the branch (kept after stop)", async () => {
+  const calls = [];
+  const dir = join("/data/run1/worktrees", "api");
+  const exec = async (args) => {
+    calls.push(args);
+    if (args[0] === "worktree" && args.includes("-b")) {
+      throw new Error("fatal: a branch named 'maestro/run1/api' already exists");
+    }
+    if (args[0] === "worktree") {
+      throw new Error(`fatal: '${dir}' already exists`);
+    }
+    if (args[0] === "-C") return { stdout: "maestro/run1/api\n", stderr: "" };
+    return { stdout: "", stderr: "" };
+  };
+  const result = await createWorktrees([{ agent: "api" }], {
+    exec,
+    root: "/data/run1/worktrees",
+    runId: "run1",
+  });
+  assert.deepEqual(result, [{ agent: "api", dir, branch: "maestro/run1/api" }]);
+  // The surviving worktree was verified to be on the expected branch.
+  assert.ok(calls.some((c) => c[0] === "-C" && c[1] === dir && c.includes("HEAD")));
+});
+
+test("createWorktrees still fails when the surviving directory is not on the branch", async () => {
+  const exec = async (args) => {
+    if (args[0] === "worktree" && args.includes("-b")) {
+      throw new Error("fatal: a branch named 'maestro/run1/api' already exists");
+    }
+    if (args[0] === "worktree" && args[1] === "add") {
+      throw new Error("fatal: '/data/run1/worktrees/api' already exists");
+    }
+    if (args[0] === "-C") return { stdout: "some/other-branch\n", stderr: "" };
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    () =>
+      createWorktrees([{ agent: "api" }], { exec, root: "/data/run1/worktrees", runId: "run1" }),
+    /already exists/,
+  );
 });
 
 test("createWorktrees propagates unrelated git failures", async () => {
