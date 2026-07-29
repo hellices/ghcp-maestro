@@ -88,7 +88,9 @@ export function buildTraceSpans({ manifest, agents }) {
       const failed = rec.status !== undefined && rec.status !== "ok";
       return {
         traceId,
-        spanId: hexId(`${runId}/${rec.agentId}`, 8),
+        // "agent/" namespaces the seed so an agent literally named "root"
+        // can't collide with the root span id.
+        spanId: hexId(`${runId}/agent/${rec.agentId}`, 8),
         parentSpanId: rootSpanId,
         name: `invoke_agent ${agentName}`,
         kind: "SPAN_KIND_CLIENT",

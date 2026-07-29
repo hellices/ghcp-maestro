@@ -84,3 +84,13 @@ test("buildTraceSpans marks failed agents and error runs", () => {
   assert.equal(child.status.code, "STATUS_CODE_ERROR");
   assert.equal(child.status.message, "took too long");
 });
+
+test("buildTraceSpans keeps an agent literally named 'root' distinct from the root span", () => {
+  const { spans } = buildTraceSpans({
+    manifest: { runId: "run-1", workflow: "task", status: "complete" },
+    agents: [{ agentId: "root", spec: { agent: "root" }, status: "ok" }],
+  });
+  const [root, child] = spans;
+  assert.notEqual(child.spanId, root.spanId, "agent span seed must be namespaced");
+  assert.equal(child.parentSpanId, root.spanId);
+});
