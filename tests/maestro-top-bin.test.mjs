@@ -9,10 +9,11 @@ import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRun } from "../core/run-store.mjs";
 
 const run = promisify(execFile);
-const BIN = new URL("../extensions/ghcp-maestro/bin/maestro-top.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../extensions/ghcp-maestro/bin/maestro-top.mjs", import.meta.url));
 
 async function freshBase() {
   return mkdtemp(join(tmpdir(), "ghcp-maestro-bin-"));

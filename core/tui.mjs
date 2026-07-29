@@ -124,13 +124,15 @@ function renderEventLines(agentEvents, width) {
  * caller passes listRuns output, which is already sorted).
  *
  * @param {Array<{ runId: string, workflow: string, status: string, startedAt?: number, finishedAt?: number, tokensUsed?: number }>} manifests
+ * @param {{ now?: () => number }} [opts]
  * @returns {string[]}
  */
-export function renderRunsOverview(manifests) {
+export function renderRunsOverview(manifests, opts = {}) {
+  const now = opts.now ?? Date.now;
   const lines = ["runId · workflow · status · elapsed · tokens"];
   for (const m of manifests ?? []) {
     const elapsed =
-      m.startedAt != null ? mmss((m.finishedAt ?? Date.now()) - m.startedAt) : "";
+      m.startedAt != null ? mmss((m.finishedAt ?? now()) - m.startedAt) : "";
     const tok = m.tokensUsed ? `${ktok(m.tokensUsed)} tok` : "";
     lines.push([m.runId, m.workflow, m.status, elapsed, tok].filter(Boolean).join(" · "));
   }
