@@ -580,8 +580,11 @@ export function createBuiltinWorkflows(deps) {
     // Cumulative across resumes — prior attempts' spend is never clobbered.
     if (totalTokens() > 0) await run.patchManifest({ tokensUsed: totalTokens() });
     await completeRun(run);
-    const tokensNote =
-      totalTokens() > 0 ? ` tokens=${totalTokens()}${budget.limit ? `/${budget.limit}` : ""}` : "";
+    // The `/limit` suffix only makes sense when the whole figure ran under the
+    // current attempt's cap — on resumes the total is cumulative across
+    // attempts while the cap is per-attempt, so the suffix would mislead.
+    const limitNote = budget.limit && priorTokens === 0 ? `/${budget.limit}` : "";
+    const tokensNote = totalTokens() > 0 ? ` tokens=${totalTokens()}${limitNote}` : "";
     // Count the verify phase whenever it was enabled — the agent ran (and
     // spent) even if it failed or produced an empty report.
     const verifyRan = verifyEnabled ? 1 : 0;
