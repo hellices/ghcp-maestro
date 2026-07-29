@@ -7,6 +7,7 @@ import {
   MAX_FILE_REFS,
   MAX_REF_CHARS,
   MAX_TOTAL_REF_CHARS,
+  MAX_REF_BYTES,
 } from "../core/task-inputs.mjs";
 
 // --- parseFileRefs ---------------------------------------------------------
@@ -113,6 +114,37 @@ test("loadFileRefs accepts absolute paths as-is", async () => {
     },
   });
   assert.equal(file.content, "abs content");
+});
+
+test("loadFileRefs stat guard rejects on-disk files above MAX_REF_BYTES before reading", async () => {
+  let readCalls = 0;
+  await assert.rejects(
+    () =>
+      loadFileRefs(["huge.md"], {
+        cwd: "/proj",
+        readFile: async () => {
+          readCalls += 1;
+          return "should never be read";
+        },
+        stat: async () => ({ size: MAX_REF_BYTES + 1 }),
+      }),
+    /@huge\.md is too large: \d+ bytes/,
+  );
+  assert.equal(readCalls, 0);
+});
+
+test("loadFileRefs stat failure reports the same cannot-read error", async () => {
+  await assert.rejects(
+    () =>
+      loadFileRefs(["gone.md"], {
+        cwd: "/proj",
+        readFile: async () => "x",
+        stat: async () => {
+          throw new Error("ENOENT");
+        },
+      }),
+    /cannot read @gone\.md: ENOENT/,
+  );
 });
 
 // --- buildFileRefsBlock ----------------------------------------------------

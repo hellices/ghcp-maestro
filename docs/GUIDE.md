@@ -47,6 +47,8 @@ Rules and limits:
   files (and fails cleanly if a spec file has since disappeared).
 - Remember every subtask prompt carries the spec: a big spec × a wide fan-out
   multiplies token cost. The gate's run-size estimate reflects prompt sizes.
+- The referenced file contents are sent to the model in every prompt — never
+  reference files containing secrets, credentials, or other sensitive data.
 
 ### Real parallel fan-out with isolation
 
