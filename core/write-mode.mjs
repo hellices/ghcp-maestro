@@ -147,13 +147,14 @@ export function validateDisjointScopes(specs) {
 
 /** @returns {string | null} normalized relative path, or null when invalid */
 function normalizeScopePath(rawPath) {
-  let path = rawPath.trim().replace(/\\/g, "/");
-  while (path.startsWith("./")) path = path.slice(2);
-  path = path.replace(/\/+$/, "");
-  if (path === "" || path === ".") return null;
+  const path = rawPath.trim().replace(/\\/g, "/");
   if (path.startsWith("/") || /^[A-Za-z]:/.test(path)) return null;
-  if (path.split("/").includes("..")) return null;
-  return path;
+  // Segment-wise normalization: collapse repeated slashes and "." segments so
+  // variants like "src//a" or "src/./a" cannot slip past the overlap check.
+  const segments = path.split("/").filter((s) => s !== "" && s !== ".");
+  if (segments.length === 0) return null;
+  if (segments.includes("..")) return null;
+  return segments.join("/");
 }
 
 function scopesOverlap(a, b) {
@@ -185,8 +186,16 @@ export async function createWorktrees(specs, opts) {
         try {
           await exec(["worktree", "add", dir, branch], { cwd: opts.cwd });
         } catch (err2) {
-          await rollbackWorktrees(exec, created, opts.cwd);
-          throw err2;
+          // The worktree directory itself may also survive (worktrees are
+          // kept on purpose when integration stops). Reuse it when it is
+          // already checked out on the expected branch.
+          const reusable =
+            /already exists/i.test(err2?.message ?? "") &&
+            (await isWorktreeOnBranch(exec, dir, branch, opts.cwd));
+          if (!reusable) {
+            await rollbackWorktrees(exec, created, opts.cwd);
+            throw err2;
+          }
         }
       } else {
         // Roll back the fresh worktrees added so far — a partial set must not
@@ -198,6 +207,16 @@ export async function createWorktrees(specs, opts) {
     created.push({ agent: spec.agent, dir, branch, fresh });
   }
   return created.map(({ agent, dir, branch }) => ({ agent, dir, branch }));
+}
+
+/** True when `dir` is an existing worktree already checked out on `branch`. */
+async function isWorktreeOnBranch(exec, dir, branch, cwd) {
+  try {
+    const { stdout } = await exec(["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+    return stdout.trim() === branch;
+  } catch {
+    return false;
+  }
 }
 
 /**

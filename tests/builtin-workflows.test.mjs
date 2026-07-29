@@ -967,7 +967,7 @@ test("task --write refuses a dirty repo without --allow-dirty (#40)", async () =
     const run2 = await runTaskWorkflow(session, "--write --allow-dirty migrate", {
       gitExec: fakeGitExec({ dirty: true }),
     });
-    assert.equal(run2.manifest.status, "error"); // plan lacks files → both attempts rejected
+    assert.equal(run2.manifest.status, "error"); // adapter returns "x" (unparseable plan) → both attempts rejected; what matters here is that the guard was lifted and the run proceeded past it
   });
 });
 
