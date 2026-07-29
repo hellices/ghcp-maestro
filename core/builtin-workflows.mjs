@@ -313,7 +313,8 @@ export function createBuiltinWorkflows(deps) {
   async function runTaskWorkflow(session, rawTask, opts = {}) {
     // Write mode (#40): strictly opt-in — via --write on the task line or the
     // opts.write escape hatch (used by other surfaces/tests). The manifest
-    // keeps the RAW line, so resume replays the same flags.
+    // task line carries the EFFECTIVE flags (see manifestTask below), so
+    // resume replays the same mode even when it was enabled via opts.write.
     const flags = parseWriteFlags(rawTask);
     const writeMode = flags.write || opts.write === true;
     const gitExec = opts.gitExec; // injectable for tests; undefined = real git
@@ -695,12 +696,12 @@ export function createBuiltinWorkflows(deps) {
       // manifest) are skipped — re-merging is a no-op but would re-run the
       // check command, which may be slow or carry side effects.
       const alreadyMerged = new Set(run.manifest?.write?.merged ?? []);
-      const okBranches = layers
+      const okAgents = layers
         .flat()
         .map((s) => s.agent)
         .filter((agent) => resultByAgent.get(agent)?.status === "ok")
-        .map((agent) => ({ agent, branch: worktreeByAgent.get(agent).branch }))
-        .filter(({ branch }) => !alreadyMerged.has(branch));
+        .map((agent) => ({ agent, branch: worktreeByAgent.get(agent).branch }));
+      const okBranches = okAgents.filter(({ branch }) => !alreadyMerged.has(branch));
       const checkCmd = opts.checkCmd ?? (env.GHCP_MAESTRO_CHECK_CMD || undefined);
       const runCheck =
         opts.runCheck ?? (checkCmd ? makeCheckRunner(checkCmd, opts.cwd) : undefined);
@@ -727,10 +728,14 @@ export function createBuiltinWorkflows(deps) {
           tokensPatch(),
         );
       }
-      // Remove only the worktrees whose branches merged cleanly; failed and
-      // remaining ones keep their worktrees so nothing is lost.
+      // Remove the worktrees whose branches are on the target branch: newly
+      // merged ones, plus already-merged ones recreated by resume (their
+      // content landed in a previous attempt). Failed and remaining ones keep
+      // their worktrees so nothing is lost.
       const mergedAgents = new Set(
-        okBranches.filter((b) => integration.merged.includes(b.branch)).map((b) => b.agent),
+        okAgents
+          .filter((b) => integration.merged.includes(b.branch) || alreadyMerged.has(b.branch))
+          .map((b) => b.agent),
       );
       const cleanup = await cleanupWorktrees(
         specs
@@ -750,8 +755,16 @@ export function createBuiltinWorkflows(deps) {
       await run.patchManifest({
         write: {
           targetBranch,
-          // Cumulative across resume attempts — the filter above relies on it.
-          merged: [...alreadyMerged, ...integration.merged],
+          // Cumulative across resume attempts — the filter above relies on
+          // it. A check-failure merge stays APPLIED on the target branch, so
+          // it counts as merged too: resume must not re-merge it or re-run
+          // the check for it (reverting it is a deliberate manual act — after
+          // that, integrate the branch manually as well).
+          merged: [
+            ...alreadyMerged,
+            ...integration.merged,
+            ...(integration.failed?.applied ? [integration.failed.branch] : []),
+          ],
           failed: integration.failed,
           remaining: integration.remaining,
         },
@@ -762,7 +775,7 @@ export function createBuiltinWorkflows(deps) {
         // leaving the branch fully unmerged. Word the report accordingly —
         // the detailed reason above carries git's own output.
         const failedNote = integration.failed.applied
-          ? `The failing merge of ${integration.failed.branch} is still applied on ${targetBranch} — inspect or revert it.`
+          ? `The failing merge of ${integration.failed.branch} is still applied on ${targetBranch} — inspect or revert it (resume will NOT re-merge or re-check it).`
           : `${integration.failed.branch} was not merged (the merge was rolled back) — resolve manually.`;
         const remainingNote =
           integration.remaining.length > 0
