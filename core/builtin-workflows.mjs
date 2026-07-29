@@ -262,6 +262,10 @@ export function createBuiltinWorkflows(deps) {
     try {
       files = await loadFileRefs(refs, { cwd: opts.cwd, readFile: opts.readFile });
     } catch (err) {
+      // On resume a RunHandle already exists and its manifest was just set to
+      // "running" — propagate so resumeRun's failRun marks it failed instead
+      // of leaving the run stuck. Fresh runs simply abort before creation.
+      if (opts.run) throw err;
       await session.log(`ghcp-maestro: ${err?.message ?? err} — aborting before fan-out`, {
         level: "error",
       });
@@ -273,7 +277,7 @@ export function createBuiltinWorkflows(deps) {
       `ghcp-maestro: inlined ${files.length} @file reference(s) (${totalChars} chars${truncated.length > 0 ? `; truncated: ${truncated.join(", ")}` : ""}): ${files.map((f) => f.path).join(", ")}`,
     );
     return {
-      task: task || "Execute the task described in the referenced file(s).",
+      task: task || "Carry out the request described in the referenced file(s).",
       refsBlock: buildFileRefsBlock(files),
     };
   }
