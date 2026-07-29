@@ -201,6 +201,16 @@ workflow file straight from GitHub into your user workflows directory,
 validating it (without executing) and warning that workflows run with your
 session's permissions.
 
+`/maestro compose <description>` writes the script for you: a planner agent
+receives the workflow-api reference plus your description and generates the
+module. The result is statically validated (parse + a scan that rejects any
+escape from the injected `api` — imports, `process`, `fetch`, `eval`, …),
+shown to you for review, dry-run against a token-free echo adapter only after
+you approve, and saved to the project workflows directory — from there it is
+runnable via `/maestro run <name>`. Add `--name <kebab>` to pick the name and
+`--force` to overwrite. On a non-interactive host nothing is executed or
+saved — the script lands as a `.draft` file for manual review.
+
 ### Quality helpers
 
 Reusable multi-agent patterns for workflow authors: `adversarialReview`

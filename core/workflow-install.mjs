@@ -95,9 +95,12 @@ export function parseWorkflowSource(source) {
  * The scan is intentionally permissive: a false accept just means /maestro
  * run reports the real shape error later; nothing is ever executed here.
  *
+ * Exported for reuse by /maestro compose, which validates generated (rather
+ * than downloaded) code through the same gate.
+ *
  * @param {string} code
  */
-async function validateWorkflowCode(code) {
+export async function validateWorkflowCode(code) {
   const dir = await mkdtemp(join(tmpdir(), "ghcp-maestro-verify-"));
   const file = join(dir, "candidate.mjs");
   try {

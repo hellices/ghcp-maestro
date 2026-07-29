@@ -12,6 +12,7 @@ import {
   parseWorkflowArgs,
   splitWorkflowInvocation,
   RESERVED_WORKFLOW_NAMES,
+  defaultWorkflowDirs,
 } from "../core/saved-workflows.mjs";
 
 async function tmp() {
@@ -19,6 +20,18 @@ async function tmp() {
 }
 
 // ── splitWorkflowInvocation ─────────────────────────────────────────────────
+
+test("defaultWorkflowDirs honors an injected env instead of process.env", () => {
+  const dirs = defaultWorkflowDirs({
+    env: { GHCP_MAESTRO_WORKFLOWS_DIR: "/inj/wf", GHCP_MAESTRO_DATA_DIR: "/inj/data" },
+  });
+  assert.equal(dirs[0], "/inj/wf");
+  assert.equal(dirs[1], join("/inj/data", "workflows"));
+  // explicit ctx fields still win over env
+  const explicit = defaultWorkflowDirs({ cwd: "/cwd", dataDir: "/dd", env: {} });
+  assert.equal(explicit[0], join("/cwd", ".ghcp-maestro", "workflows"));
+  assert.equal(explicit[1], join("/dd", "workflows"));
+});
 
 test("splitWorkflowInvocation splits '<name> [args]' and tolerates blanks", () => {
   assert.deepEqual(splitWorkflowInvocation("deep-review"), { name: "deep-review", rest: "" });

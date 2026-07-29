@@ -25,6 +25,7 @@ import {
   splitWorkflowInvocation,
 } from "../../core/saved-workflows.mjs";
 import { installWorkflowCommand } from "../../core/workflow-install.mjs";
+import { composeWorkflowCommand } from "../../core/workflow-compose.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { renderMaestroHelp } from "../../core/help.mjs";
@@ -162,6 +163,13 @@ const MAESTRO_SUBCOMMANDS = [
     needsArg: "github source [--force]",
     summary: "Install a saved workflow from GitHub into the user workflow dir. e.g. /maestro install owner/repo/path/flow.mjs[@ref] or a github.com blob URL.",
     run: (arg) => installWorkflowCommand(session, arg),
+  },
+  {
+    name: "compose",
+    needsArg: "description [--name <kebab>] [--force]",
+    background: true,
+    summary: "Generate a saved workflow from a natural-language description (planner agent → static validation → review gate → echo dry-run → saved to the project workflow dir).",
+    run: (arg) => composeWorkflowCommand(session, arg, { getAdapter: getStandaloneAdapter }),
   },
   {
     name: "help",
