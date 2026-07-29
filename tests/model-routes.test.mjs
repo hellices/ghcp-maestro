@@ -68,3 +68,9 @@ test("resolveModel returns undefined for null/empty routes", () => {
   assert.equal(resolveModel("plan", null), undefined);
   assert.equal(resolveModel("plan", undefined), undefined);
 });
+
+test("parseModelRoutes trims padded keys and values so they match at resolve time", () => {
+  const routes = parseModelRoutes({ " synth ": " premium " });
+  assert.deepEqual(routes, { synth: "premium" });
+  assert.equal(resolveModel("synth", routes), "premium");
+});

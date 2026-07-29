@@ -49,8 +49,8 @@ total token usage.
 **Model routing (opt-in).**
 Worker agents doing mechanical subtasks rarely need the same model as the
 planner or the synth phase. Set `GHCP_MAESTRO_MODEL_ROUTES` to a JSON map from
-label pattern to model — labels are `plan`, `explore:<agent>`, `synth`; `*`
-wildcards, first match wins:
+label pattern to model — labels are `plan`, `explore:<agent>`, `verify`,
+`synth`; `*` wildcards, first match wins:
 
 ```
 GHCP_MAESTRO_MODEL_ROUTES='{"explore:*":"gpt-5-mini","synth":"claude-sonnet-4.5"}'

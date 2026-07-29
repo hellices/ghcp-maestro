@@ -36,10 +36,14 @@ export function hexId(seed, bytes) {
   return out.slice(0, bytes * 2);
 }
 
-const NS_PER_MS = 1_000_000;
+const NS_PER_MS = 1_000_000n;
 
+// BigInt conversion: real epoch milliseconds × 1e6 exceed Number.MAX_SAFE_INTEGER
+// (~1.7e18 ns), so a float multiply would corrupt the low digits.
 function toNanos(ms) {
-  return typeof ms === "number" && Number.isFinite(ms) ? String(ms * NS_PER_MS) : undefined;
+  return typeof ms === "number" && Number.isFinite(ms)
+    ? String(BigInt(Math.round(ms)) * NS_PER_MS)
+    : undefined;
 }
 
 /**
