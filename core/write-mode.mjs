@@ -77,8 +77,12 @@ export async function assertWritableRepo(opts = {}) {
   const cwd = opts.cwd;
   try {
     await exec(["rev-parse", "--is-inside-work-tree"], { cwd });
-  } catch {
-    throw new Error("write mode requires a git repository — not inside a git work tree");
+  } catch (err) {
+    // Keep the friendly wording but preserve git's own diagnostics — "git not
+    // found" or a permission error must not masquerade as "not a repo".
+    throw new Error(
+      `write mode requires a git repository — not inside a git work tree (${err?.message ?? err})`,
+    );
   }
   if (!opts.allowDirty) {
     const { stdout } = await exec(["status", "--porcelain"], { cwd });
@@ -289,9 +293,9 @@ export async function integrateBranches(branches, opts) {
         [
           "merge",
           "--no-ff",
-          branch,
           "-m",
           `maestro: integrate ${agent} (${branch}) into ${opts.targetBranch}`,
+          branch,
         ],
         { cwd },
       );

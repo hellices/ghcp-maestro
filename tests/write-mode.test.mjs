@@ -237,7 +237,7 @@ test("integrateBranches merges sequentially and runs the check after each merge"
   const order = [];
   const exec = async (args) => {
     if (args[0] === "rev-parse") return { stdout: "main\n", stderr: "" };
-    order.push(`git:${args[0] === "merge" ? args[2] : args[0]}`);
+    order.push(`git:${args[0] === "merge" ? args.at(-1) : args[0]}`);
     return { stdout: "", stderr: "" };
   };
   let checks = 0;
@@ -259,6 +259,24 @@ test("integrateBranches merges sequentially and runs the check after each merge"
   assert.equal(checks, 2);
   // merge a → check → merge b → check (strictly sequential).
   assert.deepEqual(order, ["git:maestro/r/a", "check:1", "git:maestro/r/b", "check:2"]);
+});
+
+test("integrateBranches puts merge options before the branch argument", async () => {
+  const mergeArgs = [];
+  const exec = async (args) => {
+    if (args[0] === "rev-parse") return { stdout: "main\n", stderr: "" };
+    if (args[0] === "merge") mergeArgs.push(args);
+    return { stdout: "", stderr: "" };
+  };
+  await integrateBranches([{ agent: "a", branch: "maestro/r/a" }], { exec, targetBranch: "main" });
+  // git merge [-m <msg>] <commit> — options first, commit-ish last.
+  assert.deepEqual(mergeArgs[0], [
+    "merge",
+    "--no-ff",
+    "-m",
+    "maestro: integrate a (maestro/r/a) into main",
+    "maestro/r/a",
+  ]);
 });
 
 test("integrateBranches aborts the conflicted merge and reports the remainder", async () => {
