@@ -37,7 +37,8 @@ export function parseModelRoutes(raw) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const routes = {};
   for (const [k, v] of Object.entries(value)) {
-    if (typeof v === "string" && v.trim() && k.trim()) routes[k] = v;
+    // Store trimmed keys/values so a padded config still matches at resolve time.
+    if (typeof v === "string" && v.trim() && k.trim()) routes[k.trim()] = v.trim();
   }
   return Object.keys(routes).length > 0 ? routes : null;
 }

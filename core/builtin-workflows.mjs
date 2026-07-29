@@ -564,7 +564,9 @@ export function createBuiltinWorkflows(deps) {
     await completeRun(run);
     const tokensNote =
       totalTokens() > 0 ? ` tokens=${totalTokens()}${budget.limit ? `/${budget.limit}` : ""}` : "";
-    const verifyRan = verifyReport !== undefined ? 1 : 0;
+    // Count the verify phase whenever it was enabled — the agent ran (and
+    // spent) even if it failed or produced an empty report.
+    const verifyRan = verifyEnabled ? 1 : 0;
     await session.log(
       `ghcp-maestro/${runId}: task workflow complete — ${1 + exploreResults.length + verifyRan + 1} agents across ${3 + verifyRan} phases (plan + explore[${specs.length}]${verifyRan ? " + verify" : ""} + synth)${tokensNote}`,
     );

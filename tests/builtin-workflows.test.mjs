@@ -354,7 +354,10 @@ test("task workflow survives a failed verify agent and synthesizes without a rep
       session.logs.some((l) => /verify agent error: .*continuing to synth/.test(l)),
       "verify failure must be logged as a warning",
     );
-    assert.ok(session.logs.some((l) => /complete — 5 agents across 3 phases/.test(l)));
+    assert.ok(
+      session.logs.some((l) => /complete — 6 agents across 4 phases/.test(l)),
+      "the failed verify agent still ran and must be counted",
+    );
   });
 });
 

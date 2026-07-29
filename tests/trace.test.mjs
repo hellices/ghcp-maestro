@@ -35,6 +35,17 @@ test("buildTraceSpans emits an invoke_workflow root with GenAI attributes", () =
   assert.equal(root.status.code, "STATUS_CODE_OK");
 });
 
+test("buildTraceSpans keeps epoch-millisecond timestamps exact in nanos", () => {
+  // 1.7e12 ms × 1e6 = 1.7e18 ns > Number.MAX_SAFE_INTEGER — a float multiply
+  // would corrupt the low digits.
+  const startedAt = 1_735_689_600_123;
+  const { spans } = buildTraceSpans({
+    manifest: { runId: "run-1", workflow: "task", status: "complete", startedAt },
+    agents: [],
+  });
+  assert.equal(spans[0].startTimeUnixNano, "1735689600123000000");
+});
+
 test("buildTraceSpans emits one invoke_agent child per record, sorted by start", () => {
   const { spans } = buildTraceSpans({
     manifest: { runId: "run-1", workflow: "task", status: "complete" },
