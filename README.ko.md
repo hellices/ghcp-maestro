@@ -102,7 +102,7 @@ copilot --experimental
 | `/maestro install <소스> [--force]` | GitHub 에서 저장 워크플로우를 사용자 디렉터리로 설치 |
 | `/maestros [runId]` | 최근 run 목록, 또는 한 run 의 실시간 대시보드 |
 | `/maestro-resume <runId>` | run 재실행; 캐시된 에이전트는 건너뜀 |
-| `/maestro-stop <runId>` | run 중지 + 진행 중 에이전트 abort |
+| `/maestro-stop <runId>` | run 중지 (run 을 시작한 세션에서 실행 시 진행 중 에이전트 abort) |
 | `/maestro help` | 전체 하위 명령 보기 |
 
 ---
