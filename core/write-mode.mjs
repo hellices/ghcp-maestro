@@ -13,30 +13,39 @@
 // repository. Flag parsing and scope validation are pure.
 
 import { execFile, exec as execShell } from "node:child_process";
+import { mkdir as fsMkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-/** Flags recognized anywhere in the /maestro task line. */
+/** Flags recognized at the edges of the /maestro task line. */
 export const WRITE_FLAG = "--write";
 export const ALLOW_DIRTY_FLAG = "--allow-dirty";
 
 /**
- * Extract write-mode flags from a raw task line. Pure. Unknown `--` tokens are
- * left in the text (they may be part of the task itself, e.g. a CLI flag the
- * user is asking about).
+ * Extract write-mode flags from a raw task line. Pure. Flags are recognized
+ * only at the leading or trailing edge of the line — a `--write` mentioned
+ * mid-sentence (e.g. a question about the flag itself) is task text, not an
+ * instruction to enter write mode. Unknown `--` tokens are always left in
+ * the text.
  *
  * @param {string} raw
  * @returns {{ write: boolean, allowDirty: boolean, task: string }}
  */
 export function parseWriteFlags(raw) {
+  const tokens = String(raw ?? "")
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
   let write = false;
   let allowDirty = false;
-  const rest = [];
-  for (const token of String(raw ?? "").split(/\s+/)) {
-    if (token === WRITE_FLAG) write = true;
-    else if (token === ALLOW_DIRTY_FLAG) allowDirty = true;
-    else if (token.length > 0) rest.push(token);
-  }
-  return { write, allowDirty, task: rest.join(" ") };
+  const isFlag = (t) => t === WRITE_FLAG || t === ALLOW_DIRTY_FLAG;
+  const take = (t) => {
+    if (t === WRITE_FLAG) write = true;
+    else allowDirty = true;
+  };
+  let start = 0;
+  let end = tokens.length;
+  while (start < end && isFlag(tokens[start])) take(tokens[start++]);
+  while (end > start && isFlag(tokens[end - 1])) take(tokens[--end]);
+  return { write, allowDirty, task: tokens.slice(start, end).join(" ") };
 }
 
 /**
@@ -171,14 +180,19 @@ function scopesOverlap(a, b) {
 /**
  * Create one worktree + branch per agent under `root`. Branch names are
  * `maestro/<runId>/<agent>`. If the branch already exists (resume), the
- * worktree is attached to it instead of failing.
+ * worktree is attached to it instead of failing. The root directory is
+ * created first — `git worktree add` fails when the parent is missing.
  *
  * @param {{ agent: string }[]} specs
- * @param {{ exec?: typeof execGit, cwd?: string, root: string, runId: string }} opts
+ * @param {{ exec?: typeof execGit, cwd?: string, root: string, runId: string, mkdir?: ((dir: string) => Promise<unknown>) | null }} opts
  * @returns {Promise<{ agent: string, dir: string, branch: string }[]>}
  */
 export async function createWorktrees(specs, opts) {
   const exec = opts.exec ?? execGit;
+  // Same pattern as the #39 stat guard: a custom exec without a matching
+  // mkdir means a test fake — don't touch the real filesystem then.
+  const mkdir = opts.mkdir ?? (opts.exec ? null : (dir) => fsMkdir(dir, { recursive: true }));
+  if (mkdir) await mkdir(opts.root);
   const created = [];
   for (const spec of specs) {
     const branch = `maestro/${opts.runId}/${spec.agent}`;

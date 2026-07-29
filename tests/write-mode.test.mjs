@@ -37,6 +37,14 @@ test("parseWriteFlags leaves unknown -- tokens and plain text untouched", () => 
   });
 });
 
+test("parseWriteFlags treats mid-sentence --write as task text, not a flag", () => {
+  assert.deepEqual(parseWriteFlags("explain what --write does in maestro"), {
+    write: false,
+    allowDirty: false,
+    task: "explain what --write does in maestro",
+  });
+});
+
 test("parseWriteFlags tolerates empty/nullish input", () => {
   assert.deepEqual(parseWriteFlags(""), { write: false, allowDirty: false, task: "" });
   assert.deepEqual(parseWriteFlags(undefined), { write: false, allowDirty: false, task: "" });
@@ -297,6 +305,18 @@ test("createWorktrees rollback never removes a reused surviving worktree dir", a
   // The reused api worktree (may hold uncommitted agent output) survives.
   assert.ok(!calls.includes(`worktree remove ${apiDir}`));
   assert.ok(!calls.includes("branch -D maestro/run1/api"));
+});
+
+test("createWorktrees creates the root directory before adding worktrees", async () => {
+  const made = [];
+  const exec = fakeGit([["worktree add", ""]]);
+  await createWorktrees([{ agent: "api" }], {
+    exec,
+    mkdir: async (dir) => made.push(dir),
+    root: "/data/run1/worktrees",
+    runId: "run1",
+  });
+  assert.deepEqual(made, ["/data/run1/worktrees"]);
 });
 
 test("createWorktrees propagates unrelated git failures", async () => {
