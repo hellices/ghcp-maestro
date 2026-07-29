@@ -33,11 +33,6 @@ import {
   makeCheckRunner,
 } from "./write-mode.mjs";
 import { planApprovalGate } from "./plan-approval.mjs";
-
-// Worktree dirs and branch names land on case-insensitive filesystems
-// (Windows/macOS default), where "API" and "api" are the same directory —
-// hence the lowercasing on top of the base sanitizer.
-const sanitizeWriteAgentName = (name) => sanitizeAgentName(name).toLowerCase();
 import { createBudgetTracker, envBudgetTokens, estimateRunSize, envLargeRunAgents } from "./budget.mjs";
 import { envModelRoutes, resolveModel } from "./model-routes.mjs";
 import { buildSynthPrompt, buildVerifyPrompt } from "./synth.mjs";
@@ -51,6 +46,11 @@ import {
   labeledDumpLine,
   synthStatusLine,
 } from "./workflow-log.mjs";
+
+// Worktree dirs and branch names land on case-insensitive filesystems
+// (Windows/macOS default), where "API" and "api" are the same directory —
+// hence the lowercasing on top of the base sanitizer.
+const sanitizeWriteAgentName = (name) => sanitizeAgentName(name).toLowerCase();
 
 /**
  * Spread-helper: `{ model }` when the routing map resolved one, `{}` otherwise —
@@ -315,7 +315,8 @@ export function createBuiltinWorkflows(deps) {
     // opts.write escape hatch (used by other surfaces/tests). The manifest
     // keeps the RAW line, so resume replays the same flags.
     const flags = parseWriteFlags(rawTask);
-    const writeMode = flags.write || opts.write === true;    const gitExec = opts.gitExec; // injectable for tests; undefined = real git
+    const writeMode = flags.write || opts.write === true;
+    const gitExec = opts.gitExec; // injectable for tests; undefined = real git
     let targetBranch;
     if (writeMode) {
       try {
