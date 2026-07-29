@@ -72,6 +72,21 @@ test("showRuns lists recent runs and inlines a live summary for running ones", a
   assert.match(msgs.at(-1), /open a run's live dashboard/);
 });
 
+test("showRuns shows the token total for runs that recorded one", async () => {
+  const session = fakeSession();
+  await showRuns(session, "", {
+    listRuns: async () => [
+      { runId: "r-tok", workflow: "task", status: "complete", startedAt: 0, tokensUsed: 4321 },
+      { runId: "r-none", workflow: "task", status: "complete", startedAt: 0 },
+    ],
+    defaultBaseDir: () => "/tmp/runs",
+  });
+  const msgs = session.logs.map((l) => l.msg);
+  assert.ok(msgs.some((m) => m.includes("r-tok") && m.includes("tokens=4321")));
+  const noneLine = msgs.find((m) => m.includes("r-none"));
+  assert.ok(noneLine && !noneLine.includes("tokens="), "runs without usage stay unchanged");
+});
+
 // --- resumeRun --------------------------------------------------------------
 
 test("resumeRun warns when no run id is given", async () => {
@@ -179,6 +194,32 @@ test("stopRun aborts the run's in-flight agents when this process owns them", as
   });
   assert.deepEqual(abortedIds, ["r1"]);
   assert.match(session.logs[0].msg, /signalled its in-flight agents to abort/);
+});
+
+test("stopRun writes a trace for the stopped run (terminal transition)", async () => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "maestro-stop-trace-"));
+  try {
+    const session = fakeSession();
+    const manifest = { runId: "r1", workflow: "task", status: "running", startedAt: 1 };
+    await stopRun(session, "r1", {
+      openRun: async () => ({
+        runDir: dir,
+        manifest,
+        listAgents: async () => [],
+        patchManifest: async (p) => Object.assign(manifest, p),
+      }),
+      abortRun: () => false,
+      now: () => 123,
+    });
+    const trace = JSON.parse(await readFile(join(dir, "trace.json"), "utf8"));
+    assert.equal(trace.spans[0].attributes["ghcp_maestro.run.status"], "stopped");
+    assert.equal(trace.spans[0].endTimeUnixNano, "123000000");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("stopRun still aborts in-flight agents when the manifest write fails", async () => {
