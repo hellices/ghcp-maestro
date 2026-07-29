@@ -11,13 +11,14 @@
 // Parsing is pure; file access goes through an injectable `readFile` so tests
 // never touch the real filesystem.
 
-import { readFile as fsReadFile } from "node:fs/promises";
+import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { isAbsolute, resolve, normalize } from "node:path";
 
 /** Caps that protect the context window from oversized specs. */
 export const MAX_FILE_REFS = 4;
 export const MAX_REF_CHARS = 16_000; // per file
 export const MAX_TOTAL_REF_CHARS = 48_000; // across all files
+export const MAX_REF_BYTES = 1_000_000; // on-disk size guard before reading
 
 /**
  * Split a raw task line into `@path` references and the remaining task text.
@@ -53,12 +54,17 @@ export function parseFileRefs(raw) {
  * user (via logs) and the agents that a tail is missing.
  *
  * @param {string[]} refs
- * @param {{ cwd?: string, readFile?: (path: string) => Promise<string> }} [opts]
+ * @param {{ cwd?: string, readFile?: (path: string) => Promise<string>, stat?: (path: string) => Promise<{ size: number }> }} [opts]
  * @returns {Promise<{ path: string, content: string, truncated: boolean }[]>}
  */
 export async function loadFileRefs(refs, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const read = opts.readFile ?? ((p) => fsReadFile(p, "utf8"));
+  // Guard against pathologically large files BEFORE reading them into memory:
+  // only 16k chars survive truncation, so a multi-GB read would be pure waste
+  // (and could stall the host). When a custom readFile is injected (tests),
+  // the stat guard is skipped unless a matching stat is injected too.
+  const stat = opts.stat ?? (opts.readFile ? null : fsStat);
   if (refs.length > MAX_FILE_REFS) {
     throw new Error(
       `too many @file references: ${refs.length} (max ${MAX_FILE_REFS})`,
@@ -68,6 +74,19 @@ export async function loadFileRefs(refs, opts = {}) {
   let total = 0;
   for (const ref of refs) {
     const abs = isAbsolute(ref) ? normalize(ref) : resolve(cwd, ref);
+    if (stat) {
+      let info;
+      try {
+        info = await stat(abs);
+      } catch (err) {
+        throw new Error(`cannot read @${ref}: ${err?.message ?? err}`);
+      }
+      if (info.size > MAX_REF_BYTES) {
+        throw new Error(
+          `@${ref} is too large: ${info.size} bytes (max ${MAX_REF_BYTES})`,
+        );
+      }
+    }
     let content;
     try {
       content = await read(abs);
