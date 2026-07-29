@@ -103,6 +103,10 @@ test("scanForbiddenGlobals flags escapes but not prompt text", () => {
   assert.ok(scanForbiddenGlobals("console.log('hi')").length > 0);
   // Function reachable via .constructor must be caught too
   assert.ok(scanForbiddenGlobals("(async () => {}).constructor('x')()").length > 0);
+  // unicode escapes in identifiers must not hide forbidden globals
+  assert.ok(scanForbiddenGlobals("pro\\u0063ess.exit(1)").length > 0);
+  // ...but escapes inside string literals are legitimate prompt content
+  assert.equal(scanForbiddenGlobals("const s = 'caf\\u00e9';").length, 0);
   assert.ok(scanForbiddenGlobals("const e = eval; e('1')").length > 0);
   // hidden inside a template interpolation must still be caught
   assert.ok(scanForbiddenGlobals("const p = `${process.env.SECRET}`;").length > 0);

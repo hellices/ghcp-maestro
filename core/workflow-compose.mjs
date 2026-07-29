@@ -243,6 +243,7 @@ const FORBIDDEN = [
   [/\bWebSocket\b/, "WebSocket — network access is not available to workflows"],
   [/\bchild_process\b/, "child_process — shell access is not available to workflows"],
   [/\bconsole\b/, "console — stdout corrupts the host JSON-RPC channel; use api.log"],
+  [/\\u/, "unicode escape in code — identifiers must not hide forbidden globals"],
 ];
 
 /**
@@ -301,11 +302,14 @@ export async function dryRunWorkflowCode(code, opts = {}) {
         clearTimeout(timer);
         reject(err);
       });
-      child.on("close", (exitCode) => {
+      child.on("close", (exitCode, signal) => {
         clearTimeout(timer);
         if (timedOut) reject(new Error(`dry run exceeded ${timeoutMs}ms`));
         else if (exitCode === 0) resolve();
-        else reject(new Error(stderr.trim() || `dry run exited with code ${exitCode}`));
+        else {
+          const cause = exitCode === null ? `killed by ${signal}` : `exited with code ${exitCode}`;
+          reject(new Error(stderr.trim() || `dry run ${cause}`));
+        }
       });
     });
   } finally {
