@@ -225,7 +225,7 @@ export const UNTRUSTED_NOTICE =
  * output cannot close the fence early (or open a fake one) by echoing the
  * sentinels. `<<<` becomes `<\u200b<<` — visually intact, byte-different.
  *
- * @param {string} text
+ * @param {unknown} text - agent-produced text; null/undefined coerce to ""
  * @returns {string}
  */
 export function neutralizeUntrusted(text) {
