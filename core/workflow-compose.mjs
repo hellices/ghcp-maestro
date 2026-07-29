@@ -336,12 +336,16 @@ export async function dryRunWorkflowCode(code, opts = {}) {
  */
 async function writeDraft(destDir, name, code) {
   await mkdir(destDir, { recursive: true });
-  let draftFile = join(destDir, `${name}.mjs.draft`);
-  for (let n = 2; await fileExists(draftFile); n++) {
-    draftFile = join(destDir, `${name}-${n}.mjs.draft`);
+  for (let n = 1; ; n++) {
+    const draftFile = join(destDir, n === 1 ? `${name}.mjs.draft` : `${name}-${n}.mjs.draft`);
+    try {
+      // "wx" creates atomically — no check-then-write race window
+      await writeFile(draftFile, code, { encoding: "utf8", flag: "wx" });
+      return draftFile;
+    } catch (err) {
+      if (err?.code !== "EEXIST") throw err;
+    }
   }
-  await writeFile(draftFile, code, "utf8");
-  return draftFile;
 }
 
 async function fileExists(file) {
