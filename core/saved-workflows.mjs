@@ -43,6 +43,7 @@ export const RESERVED_WORKFLOW_NAMES = new Set([
   "run",
   "workflows",
   "install",
+  "compose",
   "maestro",
   "maestros",
   "maestro-resume",
