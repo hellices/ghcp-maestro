@@ -151,8 +151,11 @@ export function extractWorkflowCode(text) {
  * scanned. Plain character walk; no regex backtracking.
  *
  * A `/` opens a regex literal only when the previous significant character
- * cannot end an expression (so `a / b` stays division). Misclassifying a
- * regex as division only ADDS text to the scan — fail-closed for this use.
+ * cannot end an expression (so `a / b` stays division). Every stripped
+ * literal leaves a `0` placeholder in the output so a following `/` is still
+ * read as division (`"a" / x` must not open a regex and swallow code).
+ * Misclassifying a regex as division only ADDS text to the scan — fail-closed
+ * for this use.
  *
  * @param {string} code
  * @returns {string}
@@ -198,13 +201,13 @@ export function stripLiterals(code) {
       }
     } else if (state === "sq") {
       if (c === "\\") i += 1;
-      else if (c === "'") state = "none";
+      else if (c === "'") { state = "none"; out += "0"; }
     } else if (state === "dq") {
       if (c === "\\") i += 1;
-      else if (c === '"') state = "none";
+      else if (c === '"') { state = "none"; out += "0"; }
     } else if (state === "tpl") {
       if (c === "\\") i += 1;
-      else if (c === "`") state = "none";
+      else if (c === "`") { state = "none"; out += "0"; }
       else if (c === "$" && next === "{") {
         tplExprDepth.push(0);
         state = "none";
@@ -213,7 +216,7 @@ export function stripLiterals(code) {
     } else if (state === "regex") {
       if (c === "\\") i += 1;
       else if (c === "[") state = "regexClass";
-      else if (c === "/" || c === "\n") state = "none";
+      else if (c === "/" || c === "\n") { state = "none"; out += "0"; }
     } else if (state === "regexClass") {
       if (c === "\\") i += 1;
       else if (c === "]") state = "regex";

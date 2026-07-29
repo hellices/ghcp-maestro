@@ -116,6 +116,9 @@ test("scanForbiddenGlobals flags escapes but not prompt text", () => {
   // regex literals after expression-ending keywords are literals too
   assert.equal(scanForbiddenGlobals("function f() { return /process/; }").length, 0);
   assert.equal(scanForbiddenGlobals("if (x) throw /fetch/;").length, 0);
+  // a stripped literal leaves a placeholder so a following / stays division —
+  // otherwise "a" / process.exit(1) / "b" would be swallowed as a regex
+  assert.ok(scanForbiddenGlobals('const z = "a" / process.exit(1) / "b";').length > 0);
 });
 
 // ── buildComposePrompt ──────────────────────────────────────────────────────
