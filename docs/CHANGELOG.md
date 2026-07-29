@@ -7,6 +7,14 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **`fixLoop` explicit convergence criteria.** `core/quality.mjs`: `fixLoop`
+  now accepts an `until(iteration, check) -> { done, evidence }` predicate —
+  an externally checkable stop condition that overrides the check's own `ok`
+  flag — and `stallRounds` (stop after N consecutive rounds whose check
+  report is byte-identical; `0` disables, the default). Every result carries
+  `stopReason` (`converged` / `stalled` / `max-iters`) and the last observed
+  `evidence` string, so saved workflows can cite *why* the loop stopped.
+  Backward compatible: without `until` the loop behaves as before. (#18)
 - **Opt-in write mode — worktree-per-agent isolation (`--write`).** New
   `core/write-mode.mjs`: `/maestro task --write …` requires the plan to
   declare disjoint per-subtask file scopes (overlaps rejected, planner

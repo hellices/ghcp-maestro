@@ -246,6 +246,9 @@ export async function fixLoop(opts) {
   const history = [];
   let lastReport;
   let stallCount = 0;
+  // Latest evidence observed across all rounds — the returned `evidence` is
+  // always the last one `until` produced, even if the final round emitted none.
+  let lastEvidence;
 
   for (let i = 0; i < maxIters; i += 1) {
     if (opts.signal?.aborted) throw opts.signal.reason ?? new Error("aborted");
@@ -255,13 +258,12 @@ export async function fixLoop(opts) {
     // the check's own ok flag. `until` sees the check result so a single
     // predicate can combine both signals.
     let converged;
-    let evidence;
     if (opts.until) {
       const verdict = await opts.until(i, result);
       converged = verdict?.done === true;
       if (verdict?.evidence !== undefined) {
-        evidence = String(verdict.evidence);
-        entry.evidence = evidence;
+        lastEvidence = String(verdict.evidence);
+        entry.evidence = lastEvidence;
       }
     } else {
       converged = result.ok === true;
@@ -273,7 +275,7 @@ export async function fixLoop(opts) {
         iterations: i + 1,
         history,
         stopReason: "converged",
-        ...(evidence !== undefined ? { evidence } : {}),
+        ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
       };
     }
     // Stall detection: a failing round whose report is byte-identical to the
@@ -289,7 +291,7 @@ export async function fixLoop(opts) {
           iterations: i + 1,
           history,
           stopReason: "stalled",
-          ...(evidence !== undefined ? { evidence } : {}),
+          ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
         };
       }
     }
@@ -309,13 +311,12 @@ export async function fixLoop(opts) {
       await opts.applyFix?.(null, i);
     }
   }
-  const last = history.at(-1);
   return {
     ok: false,
     iterations: history.length,
     history,
     stopReason: "max-iters",
-    ...(last?.evidence !== undefined ? { evidence: last.evidence } : {}),
+    ...(lastEvidence !== undefined ? { evidence: lastEvidence } : {}),
   };
 }
 

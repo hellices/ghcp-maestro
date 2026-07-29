@@ -277,6 +277,18 @@ test("fixLoop rejects a negative or fractional stallRounds (#18)", async () => {
   }
 });
 
+test("fixLoop returns the last observed evidence even when the final round emits none (#18)", async () => {
+  const res = await fixLoop({
+    maxIters: 3,
+    check: async () => ({ ok: false, report: "still failing" }),
+    // Evidence only on round 0; rounds 1-2 emit none and never converge.
+    until: (i) => (i === 0 ? { done: false, evidence: "2 of 5 checks green" } : { done: false }),
+    applyFix: () => {},
+  });
+  assert.equal(res.stopReason, "max-iters");
+  assert.equal(res.evidence, "2 of 5 checks green");
+});
+
 // ── crossCheck ─────────────────────────────────────────────────────────────
 
 test("crossCheck aggregates support across sources", async () => {
