@@ -91,6 +91,91 @@ function promptPreview(prompt) {
   return String(prompt ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
+/**
+ * Mid-run steering gate (#15): after a phase completes (e.g. explore), but
+ * BEFORE the next spend (integrate / verify / synth), show a per-agent digest
+ * and ask whether to continue. Same safety envelope as `planApprovalGate`:
+ * the dialog only runs on a host that supports elicitation and when
+ * auto-approve is off; a crashed dialog fails closed. Declining stops the run
+ * — it stays resumable, so nothing already spent is lost.
+ *
+ * @param {{
+ *   phase?: string,
+ *   next?: string,
+ *   results?: { agent: string, status?: string, preview?: string }[],
+ *   ui?: { elicitation: (params: object) => Promise<{ action: string, content?: object }> } | null,
+ *   capabilities?: { ui?: { elicitation?: boolean } },
+ *   autoApprove?: boolean,
+ *   log?: (message: string, options?: object) => Promise<void> | void,
+ * }} opts
+ * @returns {Promise<{ approved: boolean, reason: string }>}
+ */
+export async function phaseApprovalGate(opts = {}) {
+  const { phase = "explore", next = "synth", ui, capabilities, autoApprove = false, log } = opts;
+  const results = Array.isArray(opts.results) ? opts.results : [];
+  const note = async (msg, options) => {
+    if (typeof log === "function") await log(msg, options);
+  };
+
+  if (autoApprove) {
+    await note(`phase gate skipped (auto-approve): continuing to ${next}`);
+    return { approved: true, reason: "auto-approve" };
+  }
+  if (!ui || capabilities?.ui?.elicitation !== true) {
+    await note(`phase gate skipped (non-interactive host): continuing to ${next}`);
+    return { approved: true, reason: "non-interactive" };
+  }
+
+  // A missing status is "unknown", not failed — callers may omit it. One
+  // summary string serves both the log line and the dialog message.
+  const okCount = results.filter((r) => r?.status === "ok").length;
+  const unknownCount = results.filter((r) => r?.status == null).length;
+  const failedCount = results.length - okCount - unknownCount;
+  const summary = `${okCount} ok / ${failedCount} failed${unknownCount > 0 ? ` / ${unknownCount} unknown` : ""} of ${results.length}`;
+  await note(`phase gate: ${phase} complete — ${summary} — review before ${next}:`);
+  for (const r of results) {
+    await note(`  • ${r.agent} [${r.status ?? "unknown"}]: ${promptPreview(r.preview)}`);
+  }
+
+  let result;
+  try {
+    result = await ui.elicitation({
+      message: `${capitalize(phase)} phase complete: ${summary}. Continue to ${next}? (Decline to stop — the run stays resumable.)`,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          proceed: {
+            type: "boolean",
+            title: `Continue to ${next}`,
+            description: "Uncheck to stop the run here (resume it later).",
+            default: true,
+          },
+        },
+        required: ["proceed"],
+      },
+    });
+  } catch (err) {
+    // Fail closed: never continue spending without explicit consent when the
+    // host claimed elicitation support but the dialog broke.
+    const reason = `error: ${err?.message ?? err}`;
+    await note(`phase gate failed: ${reason}`, { level: "error" });
+    return { approved: false, reason };
+  }
+  const action = result?.action;
+  if (action === "accept") {
+    if (result?.content?.proceed === false) return { approved: false, reason: "declined" };
+    return { approved: true, reason: "approved" };
+  }
+  if (action === "decline") return { approved: false, reason: "declined" };
+  if (action === "cancel") return { approved: false, reason: "cancelled" };
+  return { approved: false, reason: "rejected" };
+}
+
+function capitalize(word) {
+  const s = String(word);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function buildApprovalElicitation(specs, estimate) {
   // Stable index keys keep duplicate agent names distinct; enumNames carries the
   // human-readable agent label the host shows next to each checkbox.
