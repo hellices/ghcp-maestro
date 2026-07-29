@@ -176,14 +176,34 @@ export async function createWorktrees(specs, opts) {
     } catch (err) {
       // Resume path: the branch survives from the previous attempt — reattach.
       if (/already exists/i.test(err?.message ?? "")) {
-        await exec(["worktree", "add", dir, branch], { cwd: opts.cwd });
+        try {
+          await exec(["worktree", "add", dir, branch], { cwd: opts.cwd });
+        } catch (err2) {
+          await rollbackWorktrees(exec, created, opts.cwd);
+          throw err2;
+        }
       } else {
+        // Roll back the fresh worktrees added so far — a partial set must not
+        // fan out, and stray worktrees would need manual cleanup otherwise.
+        await rollbackWorktrees(exec, created, opts.cwd);
         throw err;
       }
     }
     created.push({ agent: spec.agent, dir, branch });
   }
   return created;
+}
+
+/** Best-effort removal of just-created (still pristine) worktrees + branches. */
+async function rollbackWorktrees(exec, created, cwd) {
+  for (const wt of created) {
+    try {
+      await exec(["worktree", "remove", wt.dir], { cwd });
+      await exec(["branch", "-D", wt.branch], { cwd });
+    } catch {
+      // Rollback is best-effort — the original error is what matters.
+    }
+  }
 }
 
 /**
@@ -200,7 +220,7 @@ export function buildWritePrompt(prompt, worktree) {
     `- Do ALL work inside this directory and nowhere else: ${worktree.dir}`,
     `- You are on git branch ${worktree.branch}; do not switch branches.`,
     `- Modify ONLY files under: ${worktree.files.join(", ")}`,
-    "- When done, stage and commit every change (git add + git commit) with a concise message. Uncommitted work is discarded.",
+    "- When done, stage and commit every change (git add + git commit) with a concise message. Only committed work is integrated — uncommitted changes are left behind in the worktree and never merged.",
     "",
     prompt,
   ].join("\n");
@@ -250,7 +270,13 @@ export async function integrateBranches(branches, opts) {
     const { agent, branch } = branches[i];
     try {
       await exec(
-        ["merge", "--no-ff", branch, "-m", `maestro: integrate ${agent} (${branch})`],
+        [
+          "merge",
+          "--no-ff",
+          branch,
+          "-m",
+          `maestro: integrate ${agent} (${branch}) into ${opts.targetBranch}`,
+        ],
         { cwd },
       );
     } catch (err) {

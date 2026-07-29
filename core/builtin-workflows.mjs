@@ -391,11 +391,25 @@ export function createBuiltinWorkflows(deps) {
     );
 
     // Write mode adds a second validation layer on top of the schema: scopes
-    // must be disjoint (the same-file-overwrite hazard). Both throw a
-    // human-readable message the planner can retry against.
+    // must be disjoint (the same-file-overwrite hazard) and agent ids must
+    // stay unique AFTER sanitization (branch/worktree names derive from the
+    // sanitized id — a collision would silently share a worktree). Both throw
+    // a human-readable message the planner can retry against.
     const validatePlanText = (text) => {
       const parsed = parseAndValidatePlan(text, { requireFiles: writeMode });
-      if (writeMode) validateDisjointScopes(parsed);
+      if (writeMode) {
+        validateDisjointScopes(parsed);
+        const sanitized = new Map();
+        for (const s of parsed) {
+          const key = sanitizeAgentName(s.agent);
+          if (sanitized.has(key)) {
+            throw new Error(
+              `write mode: agent ids "${sanitized.get(key)}" and "${s.agent}" collide after sanitization ("${key}") — branch and worktree names must be unique; rename one`,
+            );
+          }
+          sanitized.set(key, s.agent);
+        }
+      }
       return parsed;
     };
 
