@@ -244,12 +244,12 @@ test("compose on a non-interactive host writes a draft, never a runnable file", 
   });
 });
 
-test("compose never clobbers an existing draft without --force", async () => {
+test("compose never clobbers an existing draft, even with --force", async () => {
   await withTempDir(async (dir) => {
     const manualEdits = "// my manual edits\nexport default async function run() {}";
     await writeFile(join(dir, "my-flow.mjs.draft"), manualEdits, "utf8");
     const session = fakeSession({ interactive: false });
-    await composeWorkflowCommand(session, "do things --name my-flow", {
+    await composeWorkflowCommand(session, "do things --name my-flow --force", {
       adapter: plannerAdapter(GOOD_WORKFLOW),
       destDir: dir,
     });

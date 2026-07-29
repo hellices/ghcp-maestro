@@ -307,23 +307,20 @@ export async function dryRunWorkflowCode(code, opts = {}) {
 
 /**
  * Write the generated code to a `.draft` file without clobbering existing
- * drafts: unless `force` is set, an occupied `<name>.mjs.draft` makes the
- * draft land at the next free `<name>-N.mjs.draft`, so manual edits to a
- * previous draft survive a re-run of compose.
+ * drafts: an occupied `<name>.mjs.draft` makes the draft land at the next
+ * free `<name>-N.mjs.draft`, so manual edits to a previous draft always
+ * survive a re-run of compose (`--force` only affects the runnable `.mjs`).
  *
  * @param {string} destDir
  * @param {string} name
  * @param {string} code
- * @param {{ force?: boolean }} [opts]
  * @returns {Promise<string>} the path actually written
  */
-async function writeDraft(destDir, name, code, opts = {}) {
+async function writeDraft(destDir, name, code) {
   await mkdir(destDir, { recursive: true });
   let draftFile = join(destDir, `${name}.mjs.draft`);
-  if (!opts.force) {
-    for (let n = 2; await fileExists(draftFile); n++) {
-      draftFile = join(destDir, `${name}-${n}.mjs.draft`);
-    }
+  for (let n = 2; await fileExists(draftFile); n++) {
+    draftFile = join(destDir, `${name}-${n}.mjs.draft`);
   }
   await writeFile(draftFile, code, "utf8");
   return draftFile;
@@ -429,7 +426,7 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
   // or executed without a human decision.
   const interactive = session.capabilities?.ui?.elicitation === true && session.ui?.elicitation;
   if (!interactive) {
-    const draftFile = await writeDraft(destDir, name, code, { force });
+    const draftFile = await writeDraft(destDir, name, code);
     await session.log(
       `ghcp-maestro: compose: non-interactive host — draft written to ${draftFile}. Review it, then rename to ${name}.mjs to enable /maestro run ${name}.`,
     );
@@ -459,7 +456,7 @@ export async function composeWorkflowCommand(session, arg, opts = {}) {
   try {
     await dryRun(code, { log: () => {} });
   } catch (err) {
-    const draftFile = await writeDraft(destDir, name, code, { force });
+    const draftFile = await writeDraft(destDir, name, code);
     await warn(
       `dry run failed: ${err?.message ?? err} — draft kept at ${draftFile}. Fix it manually, then rename to ${name}.mjs.`,
     );
