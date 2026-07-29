@@ -1235,3 +1235,43 @@ test("task --write uses normalized scopes in child prompts, not raw plan strings
     assert.ok(!apiPrompt.includes("src//api"));
   });
 });
+
+test("task --write records a check-failure (applied) merge so resume never re-checks it (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    // First attempt: api merges + passes the check, ui merges but its check
+    // fails → the ui merge stays applied on the target branch.
+    const checked1 = [];
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(),
+    });
+    const run = await runTaskWorkflow(session, "--write migrate the client", {
+      gitExec: fakeGitExec(),
+      runCheck: async () => {
+        checked1.push(1);
+        if (checked1.length === 2) throw new Error("tests broke after ui");
+      },
+    });
+    assert.equal(run.manifest.status, "error");
+    const uiBranch = `maestro/${run.runId}/ui`;
+    // The applied-but-failing merge counts as merged in the manifest.
+    assert.ok(run.manifest.write.merged.includes(uiBranch));
+    assert.equal(run.manifest.write.failed.applied, true);
+
+    // Resume: only docs is left — ui must be neither re-merged nor re-checked.
+    const gitExec2 = fakeGitExec();
+    const checked2 = [];
+    const resumed = await runTaskWorkflow(session, run.manifest.args.task, {
+      run,
+      gitExec: gitExec2,
+      runCheck: async () => checked2.push(1),
+    });
+    assert.equal(resumed.manifest.status, "complete");
+    const resumeMerges = gitExec2.calls
+      .map((c) => c.args.join(" "))
+      .filter((k) => k.startsWith("merge --no-ff"));
+    assert.equal(resumeMerges.length, 1);
+    assert.ok(resumeMerges[0].includes("/docs"));
+    assert.equal(checked2.length, 1);
+  });
+});
