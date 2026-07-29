@@ -61,10 +61,18 @@ export default [
   {
     // The compose dry-run child is a standalone process whose stderr is a
     // pipe read by the parent — it is NOT connected to the JSON-RPC stdio,
-    // so writing to stderr there is the intended reporting channel.
+    // so stderr is the intended reporting channel. stdout stays restricted:
+    // the parent ignores it, so writing there would silently drop output.
     files: ["core/compose-dry-run-child.mjs"],
     rules: {
-      "no-restricted-syntax": "off",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.object.object.name='process'][callee.object.property.name='stdout'][callee.property.name='write']",
+          message: "The dry-run parent ignores the child's stdout; report via stderr.",
+        },
+      ],
     },
   },
   {
