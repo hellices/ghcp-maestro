@@ -179,6 +179,84 @@ test("fixLoop requires a check function", async () => {
   await assert.rejects(() => fixLoop({ maxIters: 2 }), /check must be a function/);
 });
 
+test("fixLoop reports stopReason converged on plain check success (#18)", async () => {
+  const res = await fixLoop({
+    maxIters: 3,
+    check: async () => ({ ok: true }),
+  });
+  assert.equal(res.stopReason, "converged");
+  assert.equal(res.evidence, undefined);
+});
+
+test("fixLoop until predicate overrides check.ok as the stop condition (#18)", async () => {
+  const untilCalls = [];
+  const res = await fixLoop({
+    maxIters: 4,
+    // check claims success immediately — the external criterion disagrees
+    // until round 2, so the loop must keep going.
+    check: async (i) => ({ ok: true, report: `round ${i}` }),
+    until: (i, chk) => {
+      untilCalls.push([i, chk.ok]);
+      return { done: i >= 2, evidence: `criterion met at round ${i}` };
+    },
+    applyFix: () => {},
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.iterations, 3);
+  assert.equal(res.stopReason, "converged");
+  assert.equal(res.evidence, "criterion met at round 2");
+  assert.deepEqual(untilCalls, [[0, true], [1, true], [2, true]]);
+  // Evidence lands in the history entry of each round that produced it.
+  assert.equal(res.history[2].evidence, "criterion met at round 2");
+});
+
+test("fixLoop stops as stalled after stallRounds identical failing reports (#18)", async () => {
+  let fixes = 0;
+  const res = await fixLoop({
+    maxIters: 10,
+    stallRounds: 2,
+    check: async () => ({ ok: false, report: "same error" }),
+    applyFix: () => { fixes += 1; },
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.stopReason, "stalled");
+  // Round 0 baselines, rounds 1 and 2 are the two no-progress rounds.
+  assert.equal(res.iterations, 3);
+  assert.equal(fixes, 2);
+});
+
+test("fixLoop stall counter resets when the report changes (#18)", async () => {
+  const reports = ["a", "a", "b", "b", "b"];
+  const res = await fixLoop({
+    maxIters: 10,
+    stallRounds: 2,
+    check: async (i) => ({ ok: false, report: reports[i] }),
+    applyFix: () => {},
+  });
+  assert.equal(res.stopReason, "stalled");
+  // a,a = 1 stall; b resets; b,b = 2 stalls -> stop at round index 4.
+  assert.equal(res.iterations, 5);
+});
+
+test("fixLoop reports max-iters with the last evidence when the cap hits (#18)", async () => {
+  const res = await fixLoop({
+    maxIters: 2,
+    check: async () => ({ ok: false, report: "broken" }),
+    until: (i) => ({ done: false, evidence: `tests still red (round ${i})` }),
+    applyFix: () => {},
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.stopReason, "max-iters");
+  assert.equal(res.evidence, "tests still red (round 1)");
+});
+
+test("fixLoop rejects a non-function until (#18)", async () => {
+  await assert.rejects(
+    () => fixLoop({ check: async () => ({ ok: true }), until: "npm test" }),
+    /until must be a function/,
+  );
+});
+
 // ── crossCheck ─────────────────────────────────────────────────────────────
 
 test("crossCheck aggregates support across sources", async () => {

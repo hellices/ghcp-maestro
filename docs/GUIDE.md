@@ -196,6 +196,13 @@ Reusable multi-agent patterns for workflow authors: `adversarialReview`
 then judge), `fixLoop` (retry until a check passes), and `crossCheck` (verify a
 claim across multiple sources).
 
+`fixLoop` also accepts an explicit convergence criterion: an `until` predicate
+(an externally checkable condition — e.g. a checker agent answering PASS — that
+overrides the check's own ok flag as the stop condition) and `stallRounds`
+(stop after N consecutive rounds whose check report doesn't change). The
+result carries `stopReason` (`converged` / `stalled` / `max-iters`) and the
+last `evidence` string so the final answer can cite why the loop stopped.
+
 ---
 
 ## Configuration
