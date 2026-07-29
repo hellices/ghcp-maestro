@@ -10,7 +10,7 @@
 
 import { listRuns as realListRuns, readRunProgress as realReadRunProgress, openRun as realOpenRun, defaultBaseDir as realDefaultBaseDir } from "./run-store.mjs";
 import { renderDashboard as realRenderDashboard, renderSummary as realRenderSummary } from "./monitor.mjs";
-import { failRun as realFailRun } from "./run-flow.mjs";
+import { failRun as realFailRun, writeRunTrace } from "./run-flow.mjs";
 import { abortRun as realAbortRun } from "./run-registry.mjs";
 
 const RECENT_RUNS_LIMIT = 20;
@@ -150,6 +150,9 @@ export async function stopRun(session, runId, deps = {}) {
     // effect, so a manifest write failure below must never skip it.
     aborted = abortRun(id);
     await run.patchManifest({ status: "stopped", finishedAt: now() });
+    // Stopped is a terminal state: export the trace like every other terminal
+    // transition (best-effort, never throws).
+    await writeRunTrace(run);
     await session.log(
       `ghcp-maestro: marked ${id} as stopped${aborted ? " and signalled its in-flight agents to abort" : " (no in-flight agents owned by this process)"}`,
     );
