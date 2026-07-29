@@ -261,6 +261,9 @@ export function createBuiltinWorkflows(deps) {
         ? run.manifest.tokensUsed
         : 0;
     const totalTokens = () => priorTokens + budget.used();
+    // Terminal manifest patch for accounting — every terminal path (complete,
+    // stopped, error) persists the cumulative spend when there is any.
+    const tokensPatch = () => (totalTokens() > 0 ? { tokensUsed: totalTokens() } : {});
     // Model routing (#17): opt-in per-label model map ("plan" / "explore:<agent>"
     // / "synth"). Null routes = every agent uses the adapter's default model.
     const routes = opts.modelRoutes ?? envModelRoutes(env);
@@ -292,6 +295,7 @@ export function createBuiltinWorkflows(deps) {
         session,
         run,
         `ghcp-maestro/${runId}: plan agent ${planResult.status}: ${planResult.error ?? "(no error)"}`,
+        tokensPatch(),
       );
     }
     const planText = (planResult.output?.text ?? "").trim();
@@ -324,6 +328,7 @@ export function createBuiltinWorkflows(deps) {
           session,
           run,
           `ghcp-maestro/${runId}: plan retry ${retryResult.status}: ${retryResult.error ?? "(no error)"}`,
+          tokensPatch(),
         );
       }
       try {
@@ -333,6 +338,7 @@ export function createBuiltinWorkflows(deps) {
           session,
           run,
           `ghcp-maestro/${runId}: plan retry also unparseable: ${err2.message}`,
+          tokensPatch(),
         );
       }
     }
@@ -372,9 +378,15 @@ export function createBuiltinWorkflows(deps) {
     });
     if (!gate.approved) {
       // Release first: releaseRun never throws, so the controller can't leak
-      // even if persisting the "stopped" status fails.
+      // even if persisting the "stopped" status fails. The plan agent already
+      // spent tokens, so the stopped manifest still gets accounting + a trace.
       releaseRun(runId);
-      await run.patchManifest({ status: "stopped" });
+      await run.patchManifest({
+        status: "stopped",
+        finishedAt: Date.now(),
+        ...tokensPatch(),
+      });
+      await writeRunTrace(run);
       await session.log(
         `ghcp-maestro/${runId}: task ${gate.reason === "empty-selection" ? "aborted (no subtasks selected)" : `cancelled by user (${gate.reason})`} — fan-out skipped`,
         { level: "warning" },
@@ -481,6 +493,7 @@ export function createBuiltinWorkflows(deps) {
         session,
         run,
         `ghcp-maestro/${runId}: task aborted — all ${exploreResults.length} subtask agents failed${hint}`,
+        tokensPatch(),
       );
     }
 
@@ -489,7 +502,11 @@ export function createBuiltinWorkflows(deps) {
     // subtasks and reruns only the skipped/failed ones under a fresh budget.
     const budgetStop = async (before) => {
       releaseRun(runId);
-      await run.patchManifest({ status: "stopped", tokensUsed: totalTokens() });
+      await run.patchManifest({
+        status: "stopped",
+        finishedAt: Date.now(),
+        tokensUsed: totalTokens(),
+      });
       await writeRunTrace(run);
       await session.log(
         `ghcp-maestro/${runId}: token budget exceeded (${budget.used()}/${budget.limit} tokens) — run stopped before ${before}; finish it later with /maestro-resume ${runId}`,
@@ -554,6 +571,7 @@ export function createBuiltinWorkflows(deps) {
         session,
         run,
         `ghcp-maestro/${runId}: task failed — synth ${synth.status}: ${synth.error ?? "(no error)"}`,
+        tokensPatch(),
       );
     }
 

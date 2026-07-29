@@ -7,7 +7,12 @@
 // (no IO), so it unit-tests off the SDK.
 
 import { agentDigest } from "./workflow-log.mjs";
-import { UNTRUSTED_NOTICE, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./plan.mjs";
+import {
+  UNTRUSTED_NOTICE,
+  UNTRUSTED_OPEN,
+  UNTRUSTED_CLOSE,
+  neutralizeUntrusted,
+} from "./plan.mjs";
 
 /**
  * Build the verification prompt fed to the opt-in verify agent (#31): given
@@ -22,7 +27,9 @@ import { UNTRUSTED_NOTICE, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./plan.mjs";
  * @returns {string}
  */
 export function buildVerifyPrompt({ task, results }) {
-  const digest = agentDigest(results ?? [], { emptyPlaceholder: "(no output)" });
+  const digest = neutralizeUntrusted(
+    agentDigest(results ?? [], { emptyPlaceholder: "(no output)" }),
+  );
   return [
     "You are a verification agent. Several independent subagents tackled different parts of a single task.",
     "For EACH subagent output below, judge it against the ORIGINAL TASK objective (not just surface plausibility):",
@@ -56,7 +63,9 @@ export function buildVerifyPrompt({ task, results }) {
  * @returns {string}
  */
 export function buildSynthPrompt({ task, results, verifyReport }) {
-  const digest = agentDigest(results ?? [], { emptyPlaceholder: "(no output)" });
+  const digest = neutralizeUntrusted(
+    agentDigest(results ?? [], { emptyPlaceholder: "(no output)" }),
+  );
   const anyFailed = (results ?? []).some((r) => r.status && r.status !== "ok");
   return [
     "You are a synthesis agent. Several independent subagents tackled different parts of a single task.",
@@ -85,7 +94,7 @@ export function buildSynthPrompt({ task, results, verifyReport }) {
           "",
           "A verification agent independently judged each subtask against the original objective. Weigh its verdicts when merging — do not present 'not-met' or 'partially-met' claims as settled facts:",
           UNTRUSTED_OPEN,
-          verifyReport,
+          neutralizeUntrusted(verifyReport),
           UNTRUSTED_CLOSE,
         ]
       : []),

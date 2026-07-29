@@ -501,6 +501,73 @@ test("task workflow keeps tokensUsed cumulative across a budget soft-stop resume
   });
 });
 
+test("gate abort persists token accounting, finishedAt, and a trace", async () => {
+  await withTempDataDir(async () => {
+    // Interactive session that cancels at the approval gate — the plan agent
+    // already spent tokens, so the stopped run must keep its accounting.
+    const logs = [];
+    const session = {
+      logs,
+      capabilities: { ui: { elicitation: true } },
+      ui: { elicitation: async () => ({ action: "decline" }) },
+      log: async (msg) => {
+        logs.push(String(msg));
+      },
+    };
+    const adapter = {
+      name: "gate-abort",
+      async invoke(spec, ctx) {
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        return {
+          text: JSON.stringify([
+            { agent: "a", prompt: "pa" },
+            { agent: "b", prompt: "pb" },
+            { agent: "c", prompt: "pc" },
+          ]),
+        };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "stopped");
+    assert.equal(run.manifest.tokensUsed, 1000, "the plan agent's spend must be persisted");
+    assert.ok(typeof run.manifest.finishedAt === "number" && run.manifest.finishedAt > 0);
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const trace = JSON.parse(await readFile(join(run.runDir, "trace.json"), "utf8"));
+    assert.ok(trace.spans.length >= 2, "root + plan spans");
+  });
+});
+
+test("task workflow persists token usage on failed runs too", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const adapter = {
+      name: "synth-fails",
+      async invoke(spec, ctx) {
+        ctx.onProgress?.({ state: "running", tokens: 1000 });
+        if (spec.agent === "plan") {
+          return {
+            text: JSON.stringify([
+              { agent: "a", prompt: "pa" },
+              { agent: "b", prompt: "pb" },
+              { agent: "c", prompt: "pc" },
+            ]),
+          };
+        }
+        if (spec.agent === "synth") throw new Error("synth blew up");
+        return { text: "out" };
+      },
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: () => adapter });
+    const run = await runTaskWorkflow(session, "do the thing");
+    assert.equal(run.manifest.status, "error");
+    // plan + 3 explore + synth attempts all reported tokens before failing.
+    assert.ok(run.manifest.tokensUsed >= 5000, `expected >=5000, got ${run.manifest.tokensUsed}`);
+    assert.ok(typeof run.manifest.finishedAt === "number" && run.manifest.finishedAt > 0);
+  });
+});
+
 // --- DAG plans (#21) ---------------------------------------------------------
 
 test("task workflow runs dependsOn subtasks in layers with augmented prompts", async () => {
