@@ -661,13 +661,26 @@ export function createBuiltinWorkflows(deps) {
       await session.log(
         `ghcp-maestro/${runId}: phase=integrate branches=${okBranches.length} target=${targetBranch}${checkCmd ? ` check="${checkCmd}"` : ""}`,
       );
-      const integration = await integrateBranches(okBranches, {
-        exec: gitExec,
-        cwd: opts.cwd,
-        targetBranch,
-        runCheck,
-        log: (msg) => session.log(`ghcp-maestro/${runId}: ${msg}`),
-      });
+      let integration;
+      try {
+        integration = await integrateBranches(okBranches, {
+          exec: gitExec,
+          cwd: opts.cwd,
+          targetBranch,
+          runCheck,
+          log: (msg) => session.log(`ghcp-maestro/${runId}: ${msg}`),
+        });
+      } catch (err) {
+        // e.g. HEAD moved off targetBranch while agents ran. Fail the run
+        // explicitly — bubbling would leave it stuck in "running" with the
+        // worktrees leaked silently.
+        return failRun(
+          session,
+          run,
+          `ghcp-maestro/${runId}: write mode: integration failed — ${err?.message ?? err}. Nothing was merged; agent branches and worktrees are kept under ${join(run.runDir, "worktrees")}. Fix the repo state and run /maestro-resume ${runId}`,
+          tokensPatch(),
+        );
+      }
       // Remove only the worktrees whose branches merged cleanly; failed and
       // remaining ones keep their worktrees so nothing is lost.
       const mergedAgents = new Set(

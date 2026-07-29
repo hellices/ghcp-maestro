@@ -354,8 +354,12 @@ export async function cleanupWorktrees(worktrees, opts = {}) {
     try {
       const { stdout } = await exec(["-C", wt.dir, "status", "--porcelain"], { cwd: opts.cwd });
       dirty = stdout.trim() !== "";
-    } catch {
-      // Worktree directory already gone — nothing to remove.
+    } catch (err) {
+      // Only a missing directory means "nothing to remove" — any other status
+      // failure (permissions, git broken) must be surfaced, not swallowed.
+      const msg = String(err?.message ?? err);
+      if (/cannot change to|no such file or directory|enoent/i.test(msg)) continue;
+      kept.push({ agent: wt.agent, dir: wt.dir, reason: `status failed: ${msg}` });
       continue;
     }
     if (dirty) {

@@ -361,11 +361,24 @@ test("cleanupWorktrees removes clean worktrees and keeps dirty ones", async () =
 
 test("cleanupWorktrees skips worktrees whose directory is already gone", async () => {
   const exec = async (args) => {
-    if (args[0] === "-C") throw new Error("no such directory");
+    if (args[0] === "-C") {
+      throw new Error("fatal: cannot change to '/wt/gone': No such file or directory");
+    }
     return { stdout: "", stderr: "" };
   };
   const result = await cleanupWorktrees([{ agent: "gone", dir: "/wt/gone" }], { exec });
   assert.deepEqual(result, { removed: [], kept: [] });
+});
+
+test("cleanupWorktrees keeps and reports worktrees whose status check fails for other reasons", async () => {
+  const exec = async (args) => {
+    if (args[0] === "-C") throw new Error("fatal: Unable to read current working directory: Permission denied");
+    return { stdout: "", stderr: "" };
+  };
+  const result = await cleanupWorktrees([{ agent: "locked", dir: "/wt/locked" }], { exec });
+  assert.deepEqual(result.removed, []);
+  assert.equal(result.kept.length, 1);
+  assert.match(result.kept[0].reason, /status failed: .*Permission denied/);
 });
 
 test("createWorktrees rolls back already-created worktrees when a later add fails", async () => {

@@ -1013,6 +1013,33 @@ test("task without --write never touches git (#40)", async () => {
   });
 });
 
+test("task --write fails the run (not stuck running) when HEAD moved off the target (#40)", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    let headCalls = 0;
+    const gitExec = fakeGitExec({
+      onCall: async (args, key) => {
+        if (key.startsWith("rev-parse --abbrev-ref HEAD")) {
+          headCalls += 1;
+          // First call: assertWritableRepo (on main). Later: integration —
+          // the user switched branches while agents ran.
+          return { stdout: headCalls === 1 ? "main\n" : "feature/elsewhere\n", stderr: "" };
+        }
+        return undefined;
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: () => writePlanAdapter(),
+    });
+    const run = await runTaskWorkflow(session, "--write migrate the client", { gitExec });
+    assert.equal(run.manifest.status, "error");
+    assert.ok(session.logs.some((l) => /integration failed — .*HEAD is on "feature\/elsewhere"/.test(l)));
+    assert.ok(session.logs.some((l) => /\/maestro-resume/.test(l)));
+    // Nothing was merged.
+    assert.ok(!gitExec.calls.some((c) => c.args[0] === "merge"));
+  });
+});
+
 test("task without --write keeps write-flag lookalikes in the task text (#40)", async () => {
   await withTempDataDir(async () => {
     const session = fakeSession();
