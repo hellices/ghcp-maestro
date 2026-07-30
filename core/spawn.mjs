@@ -248,6 +248,7 @@ async function attemptSpawn(spec, id, adapter, opts) {
  *   retries?: number,
  *   retryBaseMs?: number,
  *   budget?: { add: (n: unknown) => void, exceeded: () => boolean },
+ *   getAgentSignal?: (id: string) => AbortSignal | undefined,
  * }} opts
  * @returns {Promise<AgentResult[]>}
  */
@@ -263,7 +264,9 @@ export async function spawnAll(specs, opts) {
     (spec) => () =>
       spawn(spec, {
         adapter: opts.adapter,
-        signal: opts.signal,
+        // Per-agent signal (issue #46: stop ONE agent without aborting the
+        // fan-out) composes with the run-level signal; either aborts the spawn.
+        signal: composeSignals(opts.signal, spec.id ? opts.getAgentSignal?.(spec.id) : undefined),
         runHandle: opts.runHandle,
         onProgress: opts.onProgress,
         retries: opts.retries,
@@ -272,6 +275,13 @@ export async function spawnAll(specs, opts) {
       }),
   );
   return runWithConcurrency(tasks, { concurrency, signal: opts?.signal });
+}
+
+/** Compose up to two AbortSignals; undefined inputs pass the other through. */
+function composeSignals(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return AbortSignal.any([a, b]);
 }
 
 /**

@@ -7,7 +7,9 @@
 // Disk layout (defaults to ~/.copilot/plugin-data/ghcp-maestro/runs/<runId>/):
 //   manifest.json              — workflow name, args, status, timestamps
 //   agents/<agentId>.json      — { spec, status, output|error, startedAt, finishedAt }
-//   logs/...                   — reserved for future stream snapshots
+//   logs/<agentId>.ndjson      — append-only per-agent event stream (one JSON
+//                                object per line: ts + normalized progress
+//                                fields) consumed by the maestro-top viewer
 //
 // All writes go through writeJsonAtomic (write to .tmp → rename) so a crash
 // mid-write never leaves a partial file. Reads tolerate missing files and
@@ -16,8 +18,10 @@
 import { homedir } from "node:os";
 import { join, dirname, basename } from "node:path";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rename,
@@ -49,6 +53,19 @@ function assertSafeRunId(runId) {
   }
   if (/[/\\]/.test(runId) || runId.includes("..") || runId.includes("\0")) {
     throw new Error(`openRun: unsafe runId ${JSON.stringify(runId)}`);
+  }
+}
+
+/**
+ * Agent ids come from planner output; never join one into a path unchecked.
+ * @param {string} agentId
+ */
+function assertSafeAgentId(agentId) {
+  if (typeof agentId !== "string" || agentId.length === 0) {
+    throw new Error("agent events: agentId must be a non-empty string");
+  }
+  if (/[/\\]/.test(agentId) || agentId.includes("..") || agentId.includes("\0")) {
+    throw new Error(`agent events: unsafe agentId ${JSON.stringify(agentId)}`);
   }
 }
 
@@ -169,6 +186,70 @@ function makeHandle(runDir, manifest) {
     /** Look up a previously cached agent result. Returns undefined if missing. */
     async readAgent(agentId) {
       return readJson(join(runDir, "agents", `${agentId}.json`));
+    },
+
+    /**
+     * Append one normalized progress event to the agent's ndjson stream
+     * (`logs/<agentId>.ndjson`). One JSON object per line, stamped with `ts`.
+     * Append-only so the viewer can tail it cheaply; best-effort callers
+     * should .catch() — event logging must never fail a run.
+     */
+    async appendAgentEvent(agentId, event) {
+      assertSafeAgentId(agentId);
+      const dir = join(runDir, "logs");
+      await mkdir(dir, { recursive: true });
+      const line = JSON.stringify({ ts: Date.now(), ...event });
+      await appendFile(join(dir, `${agentId}.ndjson`), line + "\n", "utf8");
+    },
+
+    /**
+     * Read an agent's event stream, oldest first. Tolerates a torn last line
+     * (a crash mid-append) by skipping unparseable lines. `limit` keeps only
+     * the most recent N events. Only the trailing `maxBytes` of the file are
+     * read and parsed (default 256 KiB) so tailing a long-running agent's log
+     * stays cheap; when the window starts mid-file, the partial first line is
+     * discarded. Missing file → [].
+     *
+     * @param {string} agentId
+     * @param {{ limit?: number, maxBytes?: number }} [opts]
+     * @returns {Promise<object[]>}
+     */
+    async readAgentEvents(agentId, opts = {}) {
+      assertSafeAgentId(agentId);
+      const maxBytes = opts.maxBytes ?? 256 * 1024;
+      let raw;
+      let truncatedHead = false;
+      let fh;
+      try {
+        fh = await open(join(runDir, "logs", `${agentId}.ndjson`), "r");
+        const { size } = await fh.stat();
+        const start = Math.max(0, size - maxBytes);
+        truncatedHead = start > 0;
+        const buf = Buffer.alloc(size - start);
+        await fh.read(buf, 0, buf.length, start);
+        raw = buf.toString("utf8");
+      } catch (err) {
+        if (err?.code === "ENOENT") return [];
+        throw err;
+      } finally {
+        await fh?.close();
+      }
+      // a window starting mid-file almost always begins mid-line — drop it
+      if (truncatedHead) {
+        const nl = raw.indexOf("\n");
+        raw = nl === -1 ? "" : raw.slice(nl + 1);
+      }
+      const events = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          events.push(JSON.parse(line));
+        } catch {
+          // torn/partial line (crash mid-append) — skip
+        }
+      }
+      if (opts.limit && events.length > opts.limit) return events.slice(-opts.limit);
+      return events;
     },
 
     /** Persist the live progress snapshot. Atomic, serialized, best-effort. */

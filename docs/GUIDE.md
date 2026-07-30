@@ -174,6 +174,28 @@ finished agents are served from cache, only the missing or failed ones rerun.
 free while agents fan out. Run `/maestros` to list runs with a live progress
 summary, or `/maestros <runId>` for the full per-agent dashboard.
 
+### Live TUI monitor (`maestro-top`)
+
+For a real-time view outside the Copilot session, run the standalone viewer in
+another terminal:
+
+```sh
+node extensions/ghcp-maestro/bin/maestro-top.mjs            # follow the latest active run
+node extensions/ghcp-maestro/bin/maestro-top.mjs <runId>    # follow a specific run
+node extensions/ghcp-maestro/bin/maestro-top.mjs --all      # one-shot overview table
+```
+
+It reads the run store (`GHCP_MAESTRO_DATA_DIR`) and repaints once per second:
+per-agent state glyphs, elapsed time, output bytes, current tool, and token
+counts. Keys: `↑`/`↓` (or `k`/`j`) select an agent, `→`/`enter` expand its
+recent event log, `←` collapse, `a` expand all, `s` request a stop for the
+selected agent, `q` quit. Stopping is cooperative: the viewer drops a request
+file into the run's `control/` directory and the runtime aborts just that
+agent on its next poll (~1 s) — the rest of the fan-out keeps running and the
+stopped agent surfaces as `aborted` in the results. Set `GHCP_MAESTRO_TUI=1`
+to have the background-run hint print the exact `maestro-top` command for each
+new run. In a non-TTY pipe the viewer degrades to append-only frame dumps.
+
 ### OTel GenAI-style trace export
 
 Every run that reaches a terminal state (complete / stopped / error) writes a
@@ -246,5 +268,6 @@ intentionally omitted here.)
 | `GHCP_MAESTRO_RETRIES` | `1` | Automatic retries for transient agent failures (`0` disables) |
 | `GHCP_MAESTRO_LARGE_RUN_AGENTS` | `5` | Subtask count that triggers the "large fan-out" warning at the gate |
 | `GHCP_MAESTRO_NO_MONITOR` | off | Disable live progress tracking |
+| `GHCP_MAESTRO_TUI` | off | Print the `maestro-top` live-viewer command in each background-run hint |
 | `GHCP_MAESTRO_DATA_DIR` | `~/.copilot/plugin-data/ghcp-maestro` | Where run state (manifests, agent outputs, traces) is stored |
 | `GHCP_MAESTRO_WORKFLOWS_DIR` | `<cwd>/.ghcp-maestro/workflows` | Project-level saved-workflows directory (highest priority) |

@@ -7,6 +7,20 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **`maestro-top` — standalone live TUI run monitor (opt-in).** New
+  `extensions/ghcp-maestro/bin/maestro-top.mjs` viewer runs in its own
+  terminal, follows the newest active run (or a given runId, or `--all`
+  overview), and repaints per-agent state, elapsed, bytes, tool and tokens
+  once per second. Per-agent event logs are recorded as ndjson under the run's
+  `logs/` dir (`run.appendAgentEvent`, teed from the phase monitor) and can be
+  expanded/collapsed per agent (`↑`/`↓`/`j`/`k`, `→`/`enter`, `←`, `a`).
+  Pressing `s` drops a stop request into the run's `control/` directory; the
+  runtime polls it during each phase and aborts just that agent
+  (`ensureAgentController`/`abortAgent` in `core/run-registry.mjs`, per-spec
+  `getAgentSignal` composition in `spawnAll`) while the rest of the fan-out
+  keeps running. `GHCP_MAESTRO_TUI=1` makes the background-run hint print the
+  exact viewer command. View logic is pure and unit-tested (`core/tui.mjs`,
+  `core/tui-data.mjs`, `core/tui-control.mjs`). (#46)
 - **`/maestro compose <description>` — generate a saved workflow from a
   natural-language description.** New `core/workflow-compose.mjs`: a planner
   agent receives the sandboxed workflow-api reference plus the description

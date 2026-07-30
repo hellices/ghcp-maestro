@@ -78,3 +78,61 @@ test("the returned monitor keeps writing on progress and settle", () => {
   assert.equal(last.done, 1);
   assert.equal(last.agents[0].state, "done");
 });
+
+test("streams per-agent events to run.appendAgentEvent when available", () => {
+  const run = fakeRun();
+  const events = [];
+  run.appendAgentEvent = (agentId, event) => {
+    events.push({ agentId, ...event });
+    return Promise.resolve();
+  };
+  const monitor = startPhaseMonitor({
+    runId: "run-x",
+    run,
+    phase: "explore",
+    specs: [{ id: "a1", agent: "researcher" }],
+    env: {},
+    now: () => 1000,
+  });
+  monitor.onProgress({ specId: "a1", state: "tool", tool: "read_file" });
+  monitor.onProgress({ specId: "a1", state: "streaming", bytes: 2048 });
+  monitor.settle("a1", true);
+
+  assert.equal(events.length, 3);
+  assert.equal(events[0].agentId, "a1");
+  assert.equal(events[0].state, "tool");
+  assert.equal(events[0].tool, "read_file");
+  assert.equal(events[1].bytes, 2048);
+  assert.equal(events[2].state, "done");
+  assert.equal(events[2].phase, "explore");
+});
+
+test("event append failures never break progress reporting", () => {
+  const run = fakeRun();
+  run.appendAgentEvent = () => Promise.reject(new Error("disk full"));
+  const monitor = startPhaseMonitor({
+    runId: "run-x",
+    run,
+    phase: "plan",
+    specs: [{ id: "p", agent: "plan" }],
+    env: {},
+  });
+  monitor.onProgress({ specId: "p", state: "streaming", bytes: 1 });
+  monitor.settle("p", true);
+  const last = run.writes[run.writes.length - 1];
+  assert.equal(last.done, 1);
+});
+
+test("runs without appendAgentEvent (old handles) still work", () => {
+  const run = fakeRun(); // no appendAgentEvent
+  const monitor = startPhaseMonitor({
+    runId: "run-x",
+    run,
+    phase: "plan",
+    specs: [{ id: "p", agent: "plan" }],
+    env: {},
+  });
+  monitor.onProgress({ specId: "p", state: "streaming", bytes: 1 });
+  monitor.settle("p", false);
+  assert.equal(run.writes[run.writes.length - 1].agents[0].state, "failed");
+});

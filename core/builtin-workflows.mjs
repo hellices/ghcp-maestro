@@ -79,6 +79,13 @@ export function createBuiltinWorkflows(deps) {
   async function logBackgroundHint(session, runId, opts) {
     if (!opts.run) {
       await session.log(`ghcp-maestro/${runId}: running in background — watch with /maestros ${runId}`);
+      // Opt-in live TUI (issue #46): point at the standalone viewer. Only a
+      // hint — spawning terminals from inside the JSON-RPC host is not safe.
+      if (isTruthyEnv(env.GHCP_MAESTRO_TUI)) {
+        await session.log(
+          `ghcp-maestro/${runId}: live TUI — run in another terminal: node extensions/ghcp-maestro/bin/maestro-top.mjs ${runId}`,
+        );
+      }
     }
   }
 
