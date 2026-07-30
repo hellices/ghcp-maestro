@@ -18,11 +18,13 @@ test("resolveTargetRunId prefers the newest running run, else the newest run", a
 
     const done = await createRun({ workflow: "old", baseDir });
     await done.complete();
-    await new Promise((r) => setTimeout(r, 5));
     const active = await createRun({ workflow: "live", baseDir });
-    await new Promise((r) => setTimeout(r, 5));
     const newerDone = await createRun({ workflow: "newer-done", baseDir });
     await newerDone.complete();
+    // deterministic ordering: patch startedAt instead of sleeping between creates
+    await done.patchManifest({ startedAt: 1000 });
+    await active.patchManifest({ startedAt: 2000 });
+    await newerDone.patchManifest({ startedAt: 3000 });
 
     assert.equal(await resolveTargetRunId({ baseDir }), active.runId, "running beats newer terminal runs");
 
