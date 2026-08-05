@@ -27,6 +27,10 @@ export { WRITE_FLAG, ALLOW_DIRTY_FLAG };
  * instruction to enter write mode. Unknown `--` tokens are always left in
  * the text.
  *
+ * @deprecated Use `parseTaskOptions` from `core/task-options.mjs` instead —
+ *   it handles `--write`, `--allow-dirty`, `--agents`, and `--concurrency`
+ *   in a unified parser with range validation and duplicate rejection.
+ *   This function is retained for backward compatibility only.
  * @param {string} raw
  * @returns {{ write: boolean, allowDirty: boolean, task: string }}
  */

@@ -7,6 +7,8 @@
 // `parseAndValidatePlan`, having first resolved the Copilot CLI binary path
 // (which is NOT process.execPath inside the VS Code extension host).
 
+import { parseTaskOptions } from "../../core/task-options.mjs";
+
 const DEFAULT_PLAN_TIMEOUT_MS = 180_000;
 const DEFAULT_AGENT_TIMEOUT_MS = 600_000;
 
@@ -30,8 +32,19 @@ export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, pa
 
   return {
     planTask: async ({ args }) => {
-      const task = (args ?? "").trim();
-      const planSpec = { id: "plan", agent: "plan", prompt: buildPlanPrompt(task), model: defaultModel, timeoutMs: planTimeout };
+      const raw = (args ?? "").trim();
+      // Parse task-level options (--agents, --concurrency, --write, etc.)
+      // using the same core parser as the CLI surface.
+      const taskOpts = parseTaskOptions(raw);
+      const task = taskOpts.task;
+      const sizing = taskOpts.agents !== undefined ? { agentCount: taskOpts.agents } : {};
+      const planSpec = {
+        id: "plan",
+        agent: "plan",
+        prompt: buildPlanPrompt(task, undefined, undefined, undefined, taskOpts.write, sizing),
+        model: defaultModel,
+        timeoutMs: planTimeout,
+      };
       const res = await spawn(planSpec, { adapter: getAdapter() });
       if (res?.status !== "ok") {
         throw new Error(
@@ -45,12 +58,19 @@ export function createCopilotRuntime({ createAdapter, spawn, buildPlanPrompt, pa
         })();
         throw new Error(`plan spawn returned no text; output=${outPreview}`);
       }
-      const specs = parseAndValidatePlan(text).map((s) => ({
+      const specs = parseAndValidatePlan(text, { agentCount: taskOpts.agents }).map((s) => ({
         ...s,
         model: s.model ?? defaultModel,
         timeoutMs: s.timeoutMs ?? agentTimeout,
       }));
-      return { task, agents: specs };
+      return {
+        task,
+        agents: specs,
+        // Propagate per-run concurrency override so the bridge uses it
+        // instead of the configured default. Do not apply task concurrency
+        // to synth — synth is always a single agent.
+        ...(taskOpts.concurrency !== undefined ? { concurrency: taskOpts.concurrency } : {}),
+      };
     },
 
     runAgent: (spec, ctx) =>

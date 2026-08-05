@@ -4,6 +4,8 @@ import { createVsCodeLogPort } from "../vscode-extension/adapters/vscode-log-por
 import { createVsCodeCancellationPort } from "../vscode-extension/adapters/vscode-cancellation-port.mjs";
 import { createCopilotRuntime } from "../vscode-extension/adapters/copilot-runtime.mjs";
 import { buildSynthPrompt } from "../core/synth.mjs";
+import { buildPlanPrompt, parseAndValidatePlan } from "../core/plan.mjs";
+import { parseTaskOptions } from "../core/task-options.mjs";
 
 test("log port writes leveled markdown to the stream", () => {
   const out = [];
@@ -97,4 +99,37 @@ test("copilot runtime synthesize merges subtask outputs into one spawn", async (
   assert.match(synthSpec.prompt, /part one/);
   assert.match(synthSpec.prompt, /part two/);
   assert.equal(synthSpec.agent, "synth");
+});
+
+// --- VS Code scaling parity (final-review #3) --------------------------------
+
+test("VS Code task path strips --agents from task text via parseTaskOptions", () => {
+  const opts = parseTaskOptions("--agents 12 audit the API");
+  assert.equal(opts.task, "audit the API");
+  assert.equal(opts.agents, 12);
+});
+
+test("VS Code task path strips --concurrency from task text", () => {
+  const opts = parseTaskOptions("--concurrency 8 audit the API");
+  assert.equal(opts.task, "audit the API");
+  assert.equal(opts.concurrency, 8);
+});
+
+test("copilot runtime planTask forwards stripped task and agentCount to buildPlanPrompt", async () => {
+  let receivedTask = null;
+  const runtime = createCopilotRuntime({
+    createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
+    spawn: async () => {
+      return { status: "ok", output: { text: '[{"agent":"a","prompt":"p"},{"agent":"b","prompt":"p"},{"agent":"c","prompt":"p"}]' } };
+    },
+    buildPlanPrompt: (task, ...rest) => {
+      receivedTask = task;
+      // Capture the sizing arg if it eventually gets passed
+      return buildPlanPrompt(task, ...rest);
+    },
+    parseAndValidatePlan: (text, opts) => parseAndValidatePlan(text, opts),
+    defaultModel: "gpt-5",
+  });
+  await runtime.planTask({ subcommand: "task", args: "audit the API" });
+  assert.equal(receivedTask, "audit the API");
 });

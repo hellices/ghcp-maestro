@@ -328,7 +328,7 @@ export function createBuiltinWorkflows(deps) {
       });
     } catch (err) {
       if (opts.run) throw err;
-      await session.log(`ghcp-maestro: invalid task options: ${err.message}`, {
+      await session.log(`ghcp-maestro: ${err.message}`, {
         level: "error",
       });
       return null;

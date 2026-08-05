@@ -222,7 +222,7 @@ test("task workflow rejects invalid scaling options before creating a run", asyn
     assert.equal(invoked, 0);
     assert.deepEqual(await listRunIds(dir), []);
     assert.equal(session.logs.length, 1);
-    assert.match(session.logs[0], /invalid task options: .*--agents.*integer/i);
+    assert.match(session.logs[0], /task options: .*--agents.*integer/i);
   });
 });
 

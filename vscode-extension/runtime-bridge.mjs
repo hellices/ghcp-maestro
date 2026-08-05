@@ -125,6 +125,7 @@ export function createRuntimeBridge(deps) {
 
     const task = plan.task ?? input.args ?? input.subcommand;
     const specs = (plan.agents ?? []).map((s, i) => ({ id: s.id ?? `agent-${i + 1}`, ...s }));
+    const runConcurrency = plan.concurrency ?? concurrency;
     const run = { controller, task, specs: new Map() };
     runs.set(runId, run);
     for (const s of specs) run.specs.set(specKey(EXPLORE_PHASE, s.id), s);
@@ -135,7 +136,7 @@ export function createRuntimeBridge(deps) {
 
     const results = await runWithConcurrency(
       specs.map((spec) => () => runOne(sink, runId, EXPLORE_PHASE, spec, controller.signal)),
-      { concurrency: Math.max(1, concurrency) },
+      { concurrency: Math.max(1, runConcurrency) },
     );
 
     // User cancelled (via CancellationToken or stopRun): don't run extra work

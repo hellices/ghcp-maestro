@@ -46,6 +46,21 @@ test("help always includes the run-management commands", () => {
   assert.match(out, /\/maestro-stop <runId>/);
 });
 
+// --- Source contract: extension.mjs imports TASK_COMMAND_SUMMARY (final-review #12) ---
+
+test("extension.mjs statically imports and uses TASK_COMMAND_SUMMARY", async () => {
+  const { readFileSync } = await import("node:fs");
+  const extensionSrc = readFileSync(
+    new URL("../extensions/ghcp-maestro/extension.mjs", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(
+    extensionSrc.includes("TASK_COMMAND_SUMMARY"),
+    "extension.mjs must import and use TASK_COMMAND_SUMMARY from core/help.mjs",
+  );
+  assert.match(extensionSrc, /import\s*\{[^}]*TASK_COMMAND_SUMMARY[^}]*\}\s*from/);
+});
+
 test("help lists saved workflows only when present", () => {
   const without = renderMaestroHelp(SUBCOMMANDS, { savedWorkflows: [] });
   assert.doesNotMatch(without, /Saved workflows/);

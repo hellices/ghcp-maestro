@@ -80,3 +80,46 @@ test("task options preserve interior newlines in multiline input", () => {
     concurrency: undefined,
   });
 });
+
+// --- ASCII decimal digit validation (final-review #4) ------------------------
+
+test("task options reject non-ASCII-decimal numeric values", () => {
+  assert.throws(() => parseTaskOptions("--agents 0x10 audit"), /--agents.*integer/i);
+  assert.throws(() => parseTaskOptions("--agents 1e1 audit"), /--agents.*integer/i);
+  assert.throws(() => parseTaskOptions("--agents +5 audit"), /--agents.*integer/i);
+  assert.throws(() => parseTaskOptions("--agents 3.0 audit"), /--agents.*integer/i);
+  assert.throws(() => parseTaskOptions("--concurrency 0x4 audit"), /--concurrency.*integer/i);
+});
+
+test("task options accept plain ASCII decimal digits", () => {
+  assert.equal(parseTaskOptions("--agents 12 audit").agents, 12);
+  assert.equal(parseTaskOptions("--concurrency 8 audit").concurrency, 8);
+});
+
+// --- Programmatic write flag semantics (final-review #5) ---------------------
+
+test("typed --write is not cancelled by a falsy programmatic override", () => {
+  const opts = parseTaskOptions("--write audit", { write: undefined });
+  assert.equal(opts.write, true, "typed --write must survive undefined override");
+});
+
+test("explicit false programmatic override does not cancel typed --write", () => {
+  const opts = parseTaskOptions("--write audit", { write: false });
+  assert.equal(opts.write, true, "explicit false must not cancel typed --write");
+});
+
+test("programmatic write true enables write when not typed", () => {
+  const opts = parseTaskOptions("audit", { write: true });
+  assert.equal(opts.write, true);
+});
+
+test("programmatic allowDirty true enables it when not typed", () => {
+  const opts = parseTaskOptions("audit", { allowDirty: true });
+  assert.equal(opts.allowDirty, true);
+});
+
+// --- Duplicate option rejection (final-review #8/9) --------------------------
+
+test("duplicate options are rejected even across edges", () => {
+  assert.throws(() => parseTaskOptions("--write audit --write"), /duplicate.*--write/i);
+});

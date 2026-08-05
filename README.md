@@ -126,9 +126,10 @@ it as its own command, or install someone else's straight from GitHub:
 
 ## Features at a glance
 
-- **Automatic task decomposition** — a `plan` agent sizes the task into 3–16
-  automatically sized subtasks; `--agents` sets the total worker count, while
-  `--concurrency` limits how many run at once.
+- **Automatic task decomposition** — a `plan` agent automatically sizes the
+  task into 3–16 subtasks; `--agents N` (1–50) sets the exact total worker
+  count, while `--concurrency N` (1–16) limits how many run at once.
+  Duplicate options are rejected.
 - **`@file` references** — `/maestro task @docs/spec.md …` inlines a markdown
   spec into the plan and every subtask prompt.
 - **Write mode (opt-in)** — `--write` gives each subtask an isolated git

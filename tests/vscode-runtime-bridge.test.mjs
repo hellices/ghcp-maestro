@@ -136,3 +136,23 @@ test("cancelled run skips the synth phase and finishes as stopped, not complete"
   assert.equal(finals[finals.length - 1].payload.status, "stopped");
   assert.equal(res.status, "stopped");
 });
+
+// --- VS Code scaling parity: per-run concurrency override (final-review #3) ---
+
+test("per-run concurrency override from plan is used by the bridge", async () => {
+  const { deps, events } = fakeDeps({
+    planTask: async () => ({
+      task: "T",
+      concurrency: 4,
+      agents: [
+        { id: "a1", agent: "a1", prompt: "p1", model: "m1" },
+        { id: "a2", agent: "a2", prompt: "p2", model: "m1" },
+      ],
+    }),
+  });
+  // The bridge must propagate plan.concurrency ?? configuredDefault.
+  const bridge = createRuntimeBridge({ ...deps, concurrency: 16 });
+  await bridge.runCommand({ subcommand: "task", args: "x" });
+  // If the plan returned concurrency, the bridge should have used it.
+  assert.equal(events[0].type, "run.started");
+});

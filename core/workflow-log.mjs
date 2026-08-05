@@ -2,6 +2,12 @@
 // task). Extracted so the three handlers stop duplicating the same log-string
 // construction. No IO here — callers pass the strings to session.log.
 
+/** Per-agent output cap — truncate any single agent's body to this length. */
+export const MAX_AGENT_OUTPUT_CHARS = 4_000;
+
+/** Total digest cap — the entire agentDigest string must not exceed this. */
+export const MAX_AGENT_DIGEST_CHARS = 64_000;
+
 /**
  * @typedef {{
  *   spec: { agent?: string },
@@ -84,23 +90,54 @@ export function allFailed(results) {
 
 /**
  * Build the "## <agent>\n<output>" digest fed to a synth agent.
+ *
+ * When the total payload exceeds MAX_AGENT_DIGEST_CHARS, per-agent output
+ * bodies are truncated fairly (equal budget per result) with an explicit
+ * `…[truncated]` marker. Every agent heading is always preserved so the
+ * synth/verify prompt sees the full list.
+ *
+ * Small digests are byte-identical to the pre-bounding shape.
+ *
  * @param {AgentResultLike[]} results
  * @param {{ emptyPlaceholder?: string }} [opts]
  * @returns {string}
  */
 export function agentDigest(results, opts = {}) {
-  return results
-    .map((r) => {
-      // Non-ok results are disclosed, not silently dropped (#22): the synth
-      // agent must know an angle is missing rather than assume full coverage.
-      if (r.status && r.status !== "ok") {
-        const reason = r.error ? ` — ${r.error}` : "";
-        return `## ${r.spec.agent} (FAILED: ${r.status})\n(this angle is missing${reason})`;
-      }
-      const body = text(r) || (opts.emptyPlaceholder ?? "");
-      return `## ${r.spec.agent}\n${body}`;
-    })
-    .join("\n\n");
+  // Phase 1: compute the unbounded per-entry body text.
+  const entries = results.map((r) => {
+    if (r.status && r.status !== "ok") {
+      const reason = r.error ? ` — ${r.error}` : "";
+      return {
+        heading: `## ${r.spec.agent} (FAILED: ${r.status})`,
+        body: `(this angle is missing${reason})`,
+      };
+    }
+    const body = text(r) || (opts.emptyPlaceholder ?? "");
+    return { heading: `## ${r.spec.agent}`, body };
+  });
+
+  // Phase 2: check if the naive join fits. When it does, return it directly
+  // (byte-identical to the pre-bounding shape).
+  const naiveJoin = () =>
+    entries.map((e) => `${e.heading}\n${e.body}`).join("\n\n");
+  const naive = naiveJoin();
+  if (naive.length <= MAX_AGENT_DIGEST_CHARS) return naive;
+
+  // Phase 3: distribute the total payload budget across entries.
+  // Headings + "\n" separators are overhead that must fit unconditionally.
+  const overhead = entries.reduce(
+    (n, e, i) => n + e.heading.length + 1 /* \n */ + (i > 0 ? 2 : 0) /* \n\n */,
+    0,
+  );
+  const bodyBudget = Math.max(0, MAX_AGENT_DIGEST_CHARS - overhead);
+  const perEntry = Math.max(1, Math.floor(bodyBudget / entries.length));
+  const MARKER = "…[truncated]";
+  for (const e of entries) {
+    if (e.body.length > perEntry) {
+      e.body = e.body.slice(0, Math.max(0, perEntry - MARKER.length)) + MARKER;
+    }
+  }
+  return entries.map((e) => `${e.heading}\n${e.body}`).join("\n\n");
 }
 
 /**

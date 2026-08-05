@@ -18,9 +18,10 @@ Plans may declare `dependsOn` between subtasks: dependents run in a later
 wave with their dependencies' outputs injected into the prompt, and if a
 dependency fails its dependents are skipped instead of running blind.
 
-Without `--agents`, the planner chooses how many workers the task actually
-needs; `--agents N` sets the total worker count, while `--concurrency N`
-caps how many of those workers run at the same time.
+Without `--agents`, the planner automatically sizes the task into 3–16
+subtasks; `--agents N` (1–50) sets the exact total worker count, while
+`--concurrency N` (1–16) caps how many of those workers run at the same
+time. Duplicate options (e.g. `--agents 5 … --agents 10`) are rejected.
 
 Examples:
 

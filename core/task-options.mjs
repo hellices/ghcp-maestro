@@ -18,8 +18,8 @@ export function parseTaskOptions(raw, overrides = {}) {
   const parsed = parseEdgeOptions(String(raw ?? ""));
   const options = {
     ...parsed,
-    write: overrides.write ?? parsed.write,
-    allowDirty: overrides.allowDirty ?? parsed.allowDirty,
+    write: overrides.write === true ? true : parsed.write,
+    allowDirty: overrides.allowDirty === true ? true : parsed.allowDirty,
     agents: overrides.agents ?? parsed.agents,
     concurrency: overrides.concurrency ?? parsed.concurrency,
   };
@@ -61,6 +61,9 @@ function parseEdgeOptions(raw) {
     if (name === WRITE_FLAG) state.write = true;
     else if (name === ALLOW_DIRTY_FLAG) state.allowDirty = true;
     else {
+      if (!/^\d+$/.test(rawValue)) {
+        throw new Error(`task options: ${name} must be an integer`);
+      }
       const value = Number(rawValue);
       if (!Number.isInteger(value)) {
         throw new Error(`task options: ${name} must be an integer`);

@@ -193,9 +193,9 @@ phase=explore wall-clock=6687ms (parallel of 3)     ← only the deleted item is
 ### Deliverables
 - `runTaskWorkflow(session, task)` in `extension.mjs` — 3-phase automatic dynamic decomposition:
   1. **plan** (1 agent): meta-prompt + JSON schema validation; on parse failure, retry once with parser-error included
-  2. **explore** (N agent, N∈[3,6]): plan result spec array → `spawnAll(standaloneAdapter)` true parallelism
+  2. **explore** (N agent, N∈[3,16]): plan result spec array → `spawnAll(standaloneAdapter)` true parallelism
   3. **synth** (1 agent): cross-check all explore results, then final answer + next actions
-- `parseAndValidatePlan(text)` — fence strip, array bracket fallback, length 3-6, duplicate agent check
+- `parseAndValidatePlan(text)` — fence strip, array bracket fallback, length 3-16, duplicate agent check
 - `/maestro task <natural language>` slash + `GHCP_MAESTRO_PROBE_TASK` env trigger
 - Register `WORKFLOWS.task` → automatic integration with M3 RunStore / resume
 
@@ -223,7 +223,7 @@ task workflow complete — 7 agents across 3 phases
 
 ### M4 acceptance criteria
 - [x] One-line natural-language task input
-- [x] LLM automatically decomposes into 3-6 independent subtasks (JSON array)
+- [x] LLM automatically decomposes into 3-16 independent subtasks (JSON array)
 - [x] schema validation + one retry (including parser-error feedback)
 - [x] true parallel subtasks (wall-clock = max(subtasks), not sum)
 - [x] synth cross-checks all results, then final answer

@@ -148,6 +148,26 @@ test("buildPlanPrompt distinguishes automatic and explicit sizing", () => {
   );
 });
 
+// --- Planner prompt grammar (final-review #1) --------------------------------
+
+test("buildPlanPrompt automatic opening sentence is grammatical", () => {
+  const prompt = buildPlanPrompt("Build a CLI tool");
+  // Must read "into 3 to 16 subtasks that run in parallel" — not "into Choose…"
+  assert.match(prompt, /into 3 to 16 subtasks that run in parallel/);
+  assert.doesNotMatch(prompt, /into Choose/);
+});
+
+test("buildPlanPrompt explicit opening sentence includes exact count", () => {
+  const prompt = buildPlanPrompt("T", undefined, undefined, undefined, false, { agentCount: 7 });
+  assert.match(prompt, /into exactly 7 subtasks that run in parallel/);
+  assert.doesNotMatch(prompt, /into Return/);
+});
+
+test("buildPlanPrompt automatic preserves separate rule for choosing count", () => {
+  const prompt = buildPlanPrompt("T");
+  assert.match(prompt, /Choose between 3 and 16 subtasks based on genuinely independent work units/);
+});
+
 test("buildPlanPrompt appends parser feedback on retry", () => {
   const prompt = buildPlanPrompt("T", "JSON.parse failed: x", "not json");
   assert.match(prompt, /could not be parsed/);

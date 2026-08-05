@@ -11,6 +11,8 @@ import {
   logExploreResults,
   labeledDumpLine,
   synthStatusLine,
+  MAX_AGENT_OUTPUT_CHARS,
+  MAX_AGENT_DIGEST_CHARS,
 } from "../core/workflow-log.mjs";
 
 // A minimal AgentResult-like shape, matching what spawnAll returns.
@@ -193,6 +195,47 @@ test("agentDigest renders non-ok results as explicit FAILED blocks", () => {
 test("agentDigest treats results without a status as ok (back-compat)", () => {
   const digest = agentDigest([{ spec: { agent: "a" }, output: { text: "o" } }]);
   assert.equal(digest, "## a\no");
+});
+
+// --- Bounded agent digest (final-review #2) ----------------------------------
+
+test("agentDigest exports MAX constants for per-agent and total caps", () => {
+  assert.equal(typeof MAX_AGENT_OUTPUT_CHARS, "number");
+  assert.equal(MAX_AGENT_OUTPUT_CHARS, 4_000);
+  assert.equal(typeof MAX_AGENT_DIGEST_CHARS, "number");
+  assert.equal(MAX_AGENT_DIGEST_CHARS, 64_000);
+});
+
+test("agentDigest preserves byte-identical output for small runs", () => {
+  const results = [res("tech", "ok", "  point A  "), res("ux", "ok", "point B")];
+  assert.equal(agentDigest(results), "## tech\npoint A\n\n## ux\npoint B");
+});
+
+test("agentDigest truncates large outputs and stays within MAX_AGENT_DIGEST_CHARS", () => {
+  const longOutput = "x".repeat(8_000);
+  const results = Array.from({ length: 50 }, (_, i) =>
+    res(`agent-${i}`, "ok", longOutput),
+  );
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS, `digest length ${digest.length} exceeds cap ${MAX_AGENT_DIGEST_CHARS}`);
+  // Every agent heading is preserved.
+  for (let i = 0; i < 50; i++) {
+    assert.ok(digest.includes(`## agent-${i}`), `missing heading for agent-${i}`);
+  }
+  // Truncated bodies carry the marker.
+  assert.ok(digest.includes("…[truncated]"), "truncated entries should carry the marker");
+});
+
+test("agentDigest truncates failed-agent error text and keeps heading", () => {
+  const longError = "E".repeat(8_000);
+  const results = Array.from({ length: 50 }, (_, i) =>
+    ({ spec: { agent: `err-${i}` }, status: "error", error: longError, startedAt: 0, finishedAt: 1 }),
+  );
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS);
+  for (let i = 0; i < 50; i++) {
+    assert.ok(digest.includes(`## err-${i}`), `missing heading for err-${i}`);
+  }
 });
 
 test("coverageLine summarises ok vs failed subtasks", () => {

@@ -136,3 +136,32 @@ test("buildSynthPrompt truncates a runaway verify report", () => {
   assert.ok(!prompt.includes("y".repeat(MAX_VERIFY_REPORT_CHARS + 1)), "report must be capped");
   assert.ok(prompt.includes("y".repeat(MAX_VERIFY_REPORT_CHARS)), "cap keeps the leading text");
 });
+
+// --- Bounded digest in synth/verify prompts (final-review #2) ----------------
+
+test("buildSynthPrompt stays bounded with 50 long agent outputs", () => {
+  const longOutput = "x".repeat(8_000);
+  const results = Array.from({ length: 50 }, (_, i) => ({
+    spec: { agent: `agent-${i}` },
+    status: "ok",
+    output: { text: longOutput },
+  }));
+  const prompt = buildSynthPrompt({ task: "T", results });
+  // The digest inside must not blow up the prompt beyond reason.
+  for (let i = 0; i < 50; i++) {
+    assert.ok(prompt.includes(`## agent-${i}`), `missing agent-${i} heading in synth prompt`);
+  }
+});
+
+test("buildVerifyPrompt stays bounded with 50 long agent outputs", () => {
+  const longOutput = "x".repeat(8_000);
+  const results = Array.from({ length: 50 }, (_, i) => ({
+    spec: { agent: `agent-${i}` },
+    status: "ok",
+    output: { text: longOutput },
+  }));
+  const prompt = buildVerifyPrompt({ task: "T", results });
+  for (let i = 0; i < 50; i++) {
+    assert.ok(prompt.includes(`## agent-${i}`), `missing agent-${i} heading in verify prompt`);
+  }
+});
