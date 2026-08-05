@@ -302,3 +302,23 @@ test("agentDigest handles 1000 results with long names and long bodies", () => {
     assert.ok(digest.includes("omitted"), "must disclose omitted agents");
   }
 });
+
+test("agentDigest stays within MAX_AGENT_DIGEST_CHARS with 1000 legal-length names (marker overflow)", () => {
+  // 1000 entries with 48-55 char names: headings consume most of the 64 000
+  // budget, leaving perEntry < MARKER.length — the marker itself must not
+  // push the total over the cap.
+  const results = Array.from({ length: 1000 }, (_, i) => {
+    const nameLen = 48 + (i % 8);
+    const name = `agent-${String(i).padStart(4, "0")}-${"x".repeat(nameLen - 11)}`;
+    return {
+      spec: { agent: name },
+      status: "ok",
+      output: { text: "x".repeat(100) },
+      startedAt: 0,
+      finishedAt: 1,
+    };
+  });
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
+    `digest length ${digest.length} must not exceed ${MAX_AGENT_DIGEST_CHARS}`);
+});

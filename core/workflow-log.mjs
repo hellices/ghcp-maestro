@@ -141,7 +141,7 @@ export function agentDigest(results, opts = {}) {
     const perEntry = Math.max(1, Math.floor(bodyBudget / entries.length));
     for (const e of entries) {
       if (e.body.length > perEntry) {
-        e.body = e.body.slice(0, Math.max(0, perEntry - MARKER.length)) + MARKER;
+        e.body = perEntry <= MARKER.length ? "" : e.body.slice(0, perEntry - MARKER.length) + MARKER;
       }
     }
     return join(entries);
