@@ -91,10 +91,13 @@ export function allFailed(results) {
 /**
  * Build the "## <agent>\n<output>" digest fed to a synth agent.
  *
- * When the total payload exceeds MAX_AGENT_DIGEST_CHARS, per-agent output
- * bodies are truncated fairly (equal budget per result) with an explicit
- * `…[truncated]` marker. Every agent heading is always preserved so the
- * synth/verify prompt sees the full list.
+ * Per-agent output bodies are hard-capped to MAX_AGENT_OUTPUT_CHARS (with a
+ * truncation marker). When the total payload exceeds MAX_AGENT_DIGEST_CHARS,
+ * per-agent output bodies are truncated fairly (equal budget per result).
+ * Every agent heading is preserved for the `/maestro task` supported maximum
+ * of 50; for arbitrarily large saved-workflow inputs where headings alone
+ * overflow, long names are compacted and excess entries are omitted with an
+ * explicit summary.
  *
  * Small digests are byte-identical to the pre-bounding shape.
  *
@@ -103,41 +106,80 @@ export function allFailed(results) {
  * @returns {string}
  */
 export function agentDigest(results, opts = {}) {
-  // Phase 1: compute the unbounded per-entry body text.
+  const MARKER = "…[truncated]";
+
+  // Phase 1: compute per-entry heading + body, with per-agent body cap.
   const entries = results.map((r) => {
+    let heading, body;
     if (r.status && r.status !== "ok") {
+      heading = `## ${r.spec.agent} (FAILED: ${r.status})`;
       const reason = r.error ? ` — ${r.error}` : "";
-      return {
-        heading: `## ${r.spec.agent} (FAILED: ${r.status})`,
-        body: `(this angle is missing${reason})`,
-      };
+      body = `(this angle is missing${reason})`;
+    } else {
+      heading = `## ${r.spec.agent}`;
+      body = text(r) || (opts.emptyPlaceholder ?? "");
     }
-    const body = text(r) || (opts.emptyPlaceholder ?? "");
-    return { heading: `## ${r.spec.agent}`, body };
+    if (body.length > MAX_AGENT_OUTPUT_CHARS) {
+      body = body.slice(0, Math.max(0, MAX_AGENT_OUTPUT_CHARS - MARKER.length)) + MARKER;
+    }
+    return { heading, body };
   });
 
-  // Phase 2: check if the naive join fits. When it does, return it directly
-  // (byte-identical to the pre-bounding shape).
-  const naiveJoin = () =>
-    entries.map((e) => `${e.heading}\n${e.body}`).join("\n\n");
-  const naive = naiveJoin();
+  const join = (es) => es.map((e) => `${e.heading}\n${e.body}`).join("\n\n");
+
+  // Phase 2: if the per-agent-capped join fits, return it directly
+  // (byte-identical to the pre-bounding shape for small runs).
+  const naive = join(entries);
   if (naive.length <= MAX_AGENT_DIGEST_CHARS) return naive;
 
-  // Phase 3: distribute the total payload budget across entries.
-  // Headings + "\n" separators are overhead that must fit unconditionally.
-  const overhead = entries.reduce(
-    (n, e, i) => n + e.heading.length + 1 /* \n */ + (i > 0 ? 2 : 0) /* \n\n */,
-    0,
-  );
-  const bodyBudget = Math.max(0, MAX_AGENT_DIGEST_CHARS - overhead);
-  const perEntry = Math.max(1, Math.floor(bodyBudget / entries.length));
-  const MARKER = "…[truncated]";
+  // Phase 3: all headings fit — distribute remaining body budget fairly.
+  const overheadOf = (es) =>
+    es.reduce((n, e, i) => n + e.heading.length + 1 + (i > 0 ? 2 : 0), 0);
+  const overhead = overheadOf(entries);
+  if (overhead <= MAX_AGENT_DIGEST_CHARS) {
+    const bodyBudget = MAX_AGENT_DIGEST_CHARS - overhead;
+    const perEntry = Math.max(1, Math.floor(bodyBudget / entries.length));
+    for (const e of entries) {
+      if (e.body.length > perEntry) {
+        e.body = e.body.slice(0, Math.max(0, perEntry - MARKER.length)) + MARKER;
+      }
+    }
+    return join(entries);
+  }
+
+  // Phase 4: headings overflow — compact long names, drop bodies.
+  const COMPACT_NAME_LEN = 20;
   for (const e of entries) {
-    if (e.body.length > perEntry) {
-      e.body = e.body.slice(0, Math.max(0, perEntry - MARKER.length)) + MARKER;
+    const m = e.heading.match(/^## (.+?)( \(FAILED: .+\))?$/);
+    if (m && m[1].length > COMPACT_NAME_LEN) {
+      e.heading = `## ${m[1].slice(0, COMPACT_NAME_LEN - 1)}…${m[2] ?? ""}`;
+    }
+    e.body = "";
+  }
+  const compactOverhead = overheadOf(entries);
+  if (compactOverhead <= MAX_AGENT_DIGEST_CHARS) return join(entries);
+
+  // Phase 5: even compacted headings don't fit — include what we can + omission summary.
+  const included = [];
+  let used = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const entryCost = (included.length > 0 ? 2 : 0) + e.heading.length + 1;
+    const omitted = entries.length - (included.length + 1);
+    const omissionText = omitted > 0 ? `…[${omitted} more agent(s) omitted]` : "";
+    const omissionCost = omitted > 0 ? 2 + omissionText.length : 0;
+    if (used + entryCost + omissionCost <= MAX_AGENT_DIGEST_CHARS) {
+      included.push(e);
+      used += entryCost;
+    } else {
+      break;
     }
   }
-  return entries.map((e) => `${e.heading}\n${e.body}`).join("\n\n");
+  const omitted = entries.length - included.length;
+  if (omitted === 0) return join(included);
+  const omissionLine = `…[${omitted} more agent(s) omitted]`;
+  if (included.length === 0) return omissionLine;
+  return `${join(included)}\n\n${omissionLine}`;
 }
 
 /**

@@ -249,3 +249,56 @@ test("coverageLine summarises ok vs failed subtasks", () => {
     "ghcp-maestro/r1: coverage: 1/4 subtasks ok (1 error, 1 skipped, 1 timeout)",
   );
 });
+
+// --- Per-agent digest cap (re-review #3) -------------------------------------
+
+test("agentDigest caps one huge success output to MAX_AGENT_OUTPUT_CHARS including marker", () => {
+  const hugeBody = "x".repeat(10_000);
+  const digest = agentDigest([res("big", "ok", hugeBody)]);
+  const bodyStart = digest.indexOf("\n") + 1;
+  const body = digest.slice(bodyStart);
+  assert.ok(body.length <= MAX_AGENT_OUTPUT_CHARS,
+    `body length ${body.length} exceeds per-agent cap ${MAX_AGENT_OUTPUT_CHARS}`);
+  assert.ok(body.endsWith("…[truncated]"), "capped body must carry truncation marker");
+});
+
+test("agentDigest caps failure reason to MAX_AGENT_OUTPUT_CHARS", () => {
+  const hugeError = "E".repeat(10_000);
+  const digest = agentDigest([{ spec: { agent: "fail" }, status: "error", error: hugeError, startedAt: 0, finishedAt: 1 }]);
+  const headingEnd = digest.indexOf("\n") + 1;
+  const body = digest.slice(headingEnd);
+  assert.ok(body.length <= MAX_AGENT_OUTPUT_CHARS,
+    `failure body ${body.length} exceeds per-agent cap ${MAX_AGENT_OUTPUT_CHARS}`);
+});
+
+test("agentDigest preserves 50 headings with per-agent cap and stays within total cap", () => {
+  const results = Array.from({ length: 50 }, (_, i) =>
+    res(`agent-${i}`, "ok", "x".repeat(8_000)),
+  );
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS);
+  for (let i = 0; i < 50; i++) {
+    assert.ok(digest.includes(`## agent-${i}`), `missing heading for agent-${i}`);
+  }
+});
+
+// --- Arbitrary large digest inputs (re-review #4) ----------------------------
+
+test("agentDigest handles 1000 results with long names and long bodies", () => {
+  const longName = "agent-" + "x".repeat(55);
+  const longBody = "B".repeat(10_000);
+  const results = Array.from({ length: 1000 }, (_, i) => ({
+    spec: { agent: `${longName}-${i}` },
+    status: "ok",
+    output: { text: longBody },
+    startedAt: 0,
+    finishedAt: 1,
+  }));
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
+    `digest length ${digest.length} exceeds cap ${MAX_AGENT_DIGEST_CHARS}`);
+  const headingCount = (digest.match(/^## /gm) || []).length;
+  if (headingCount < 1000) {
+    assert.ok(digest.includes("omitted"), "must disclose omitted agents");
+  }
+});

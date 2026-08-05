@@ -137,22 +137,81 @@ test("cancelled run skips the synth phase and finishes as stopped, not complete"
   assert.equal(res.status, "stopped");
 });
 
-// --- VS Code scaling parity: per-run concurrency override (final-review #3) ---
+// --- VS Code scaling parity: per-run concurrency override (re-review #2) -----
 
-test("per-run concurrency override from plan is used by the bridge", async () => {
+test("per-run concurrency 2 overrides configured default with 4 workers", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const gates = new Map();
   const { deps, events } = fakeDeps({
     planTask: async () => ({
       task: "T",
-      concurrency: 4,
-      agents: [
-        { id: "a1", agent: "a1", prompt: "p1", model: "m1" },
-        { id: "a2", agent: "a2", prompt: "p2", model: "m1" },
-      ],
+      concurrency: 2,
+      agents: Array.from({ length: 4 }, (_, i) => ({
+        id: `a${i + 1}`, agent: `a${i + 1}`, prompt: `p${i + 1}`, model: "m1",
+      })),
     }),
+    runAgent: (spec) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      return new Promise((resolve) => {
+        gates.set(spec.id, () => {
+          inFlight--;
+          resolve({ id: spec.id, spec, status: "ok", output: { text: `out-${spec.id}` }, startedAt: 1, finishedAt: 3 });
+        });
+      });
+    },
+    synthesize: async () => "synth result",
   });
-  // The bridge must propagate plan.concurrency ?? configuredDefault.
   const bridge = createRuntimeBridge({ ...deps, concurrency: 16 });
-  await bridge.runCommand({ subcommand: "task", args: "x" });
-  // If the plan returned concurrency, the bridge should have used it.
-  assert.equal(events[0].type, "run.started");
+  const p = bridge.runCommand({ subcommand: "task", args: "x" });
+  // Drain microtasks to let the semaphore admit the first batch.
+  const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+  await drain();
+  assert.equal(inFlight, 2, "first wave: exactly 2 in-flight with concurrency 2");
+  // Release first wave.
+  for (const g of gates.values()) g();
+  gates.clear();
+  await drain();
+  assert.equal(inFlight, 2, "second wave: next 2 agents in-flight");
+  // Release second wave.
+  for (const g of gates.values()) g();
+  gates.clear();
+  await p;
+  assert.equal(maxInFlight, 2, "per-run concurrency 2 must override configured default 16");
+  // Synth runs after fan-out, outside the concurrency pool.
+  assert.ok(events.some((e) => e.type === "agent.started" && e.agentId === "synth"),
+    "synth must run outside the fan-out concurrency pool");
+});
+
+test("saved workflow uses configured default concurrency, not per-run override", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const gates = new Map();
+  const { deps } = fakeDeps({
+    loadWorkflow: async () => ({
+      task: "T",
+      agents: Array.from({ length: 4 }, (_, i) => ({
+        id: `a${i + 1}`, agent: `a${i + 1}`, prompt: `p${i + 1}`, model: "m1",
+      })),
+    }),
+    runAgent: (spec) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      return new Promise((resolve) => {
+        gates.set(spec.id, () => {
+          inFlight--;
+          resolve({ id: spec.id, spec, status: "ok", output: { text: "out" }, startedAt: 1, finishedAt: 3 });
+        });
+      });
+    },
+  });
+  const bridge = createRuntimeBridge({ ...deps, concurrency: 4 });
+  const p = bridge.runCommand({ subcommand: "run", args: "my-workflow" });
+  const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+  await drain();
+  assert.equal(inFlight, 4, "saved workflow should use configured default concurrency 4");
+  for (const g of gates.values()) g();
+  await p;
+  assert.equal(maxInFlight, 4);
 });

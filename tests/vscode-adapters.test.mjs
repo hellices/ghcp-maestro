@@ -4,8 +4,6 @@ import { createVsCodeLogPort } from "../vscode-extension/adapters/vscode-log-por
 import { createVsCodeCancellationPort } from "../vscode-extension/adapters/vscode-cancellation-port.mjs";
 import { createCopilotRuntime } from "../vscode-extension/adapters/copilot-runtime.mjs";
 import { buildSynthPrompt } from "../core/synth.mjs";
-import { buildPlanPrompt, parseAndValidatePlan } from "../core/plan.mjs";
-import { parseTaskOptions } from "../core/task-options.mjs";
 
 test("log port writes leveled markdown to the stream", () => {
   const out = [];
@@ -101,35 +99,89 @@ test("copilot runtime synthesize merges subtask outputs into one spawn", async (
   assert.equal(synthSpec.agent, "synth");
 });
 
-// --- VS Code scaling parity (final-review #3) --------------------------------
+// --- VS Code write-mode rejection (re-review #1) ----------------------------
 
-test("VS Code task path strips --agents from task text via parseTaskOptions", () => {
-  const opts = parseTaskOptions("--agents 12 audit the API");
-  assert.equal(opts.task, "audit the API");
-  assert.equal(opts.agents, 12);
+test("copilot runtime rejects --write before plan spawn", async () => {
+  const runtime = createCopilotRuntime({
+    createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
+    spawn: async () => assert.fail("spawn must not be called when --write is used"),
+    buildPlanPrompt: (t) => t,
+    parseAndValidatePlan: () => [],
+  });
+  await assert.rejects(
+    () => runtime.planTask({ subcommand: "task", args: "--write audit the API" }),
+    /--write.*CLI/i,
+  );
 });
 
-test("VS Code task path strips --concurrency from task text", () => {
-  const opts = parseTaskOptions("--concurrency 8 audit the API");
-  assert.equal(opts.task, "audit the API");
-  assert.equal(opts.concurrency, 8);
+test("copilot runtime rejects --allow-dirty before plan spawn", async () => {
+  const runtime = createCopilotRuntime({
+    createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
+    spawn: async () => assert.fail("spawn must not be called when --allow-dirty is used"),
+    buildPlanPrompt: (t) => t,
+    parseAndValidatePlan: () => [],
+  });
+  await assert.rejects(
+    () => runtime.planTask({ subcommand: "task", args: "--allow-dirty audit the API" }),
+    /--allow-dirty.*CLI/i,
+  );
 });
 
-test("copilot runtime planTask forwards stripped task and agentCount to buildPlanPrompt", async () => {
+test("brainstorm empty input says topic is required, not task description", async () => {
+  const runtime = createCopilotRuntime({
+    createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
+    spawn: async () => assert.fail("spawn must not be called"),
+    buildPlanPrompt: (t) => t,
+    parseAndValidatePlan: () => [],
+  });
+  await assert.rejects(
+    () => runtime.planTask({ subcommand: "brainstorm", args: "" }),
+    /topic is required/i,
+  );
+});
+
+test("brainstorm subcommand uses raw args without parseTaskOptions", async () => {
   let receivedTask = null;
   const runtime = createCopilotRuntime({
     createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
-    spawn: async () => {
-      return { status: "ok", output: { text: '[{"agent":"a","prompt":"p"},{"agent":"b","prompt":"p"},{"agent":"c","prompt":"p"}]' } };
+    spawn: async () => ({
+      status: "ok",
+      output: { text: '[{"agent":"a","prompt":"p"},{"agent":"b","prompt":"q"},{"agent":"c","prompt":"r"}]' },
+    }),
+    buildPlanPrompt: (task) => { receivedTask = task; return `PLAN: ${task}`; },
+    parseAndValidatePlan: (text) => JSON.parse(text),
+  });
+  const plan = await runtime.planTask({ subcommand: "brainstorm", args: "future of AI" });
+  assert.equal(receivedTask, "future of AI");
+  assert.equal(plan.task, "future of AI");
+  assert.equal(plan.concurrency, undefined, "brainstorm must not set concurrency");
+});
+
+// --- VS Code scaling parity (re-review #2) -----------------------------------
+
+test("copilot runtime planTask with --agents 12 --concurrency 2 forwards sizing", async () => {
+  let planPromptSizing = null;
+  let parseOpts = null;
+  const runtime = createCopilotRuntime({
+    createAdapter: () => ({ name: "fake", invoke: async () => ({}) }),
+    spawn: async () => ({
+      status: "ok",
+      output: { text: JSON.stringify(Array.from({ length: 12 }, (_, i) => ({ agent: `a${i}`, prompt: `p${i}` }))) },
+    }),
+    buildPlanPrompt: (task, _pe, _pr, _rb, _wm, sizing) => {
+      planPromptSizing = sizing;
+      return `PLAN: ${task}`;
     },
-    buildPlanPrompt: (task, ...rest) => {
-      receivedTask = task;
-      // Capture the sizing arg if it eventually gets passed
-      return buildPlanPrompt(task, ...rest);
+    parseAndValidatePlan: (text, opts) => {
+      parseOpts = opts;
+      return JSON.parse(text);
     },
-    parseAndValidatePlan: (text, opts) => parseAndValidatePlan(text, opts),
     defaultModel: "gpt-5",
   });
-  await runtime.planTask({ subcommand: "task", args: "audit the API" });
-  assert.equal(receivedTask, "audit the API");
+  const plan = await runtime.planTask({ subcommand: "task", args: "--agents 12 --concurrency 2 audit the API" });
+  assert.equal(plan.task, "audit the API");
+  assert.deepEqual(planPromptSizing, { agentCount: 12 });
+  assert.deepEqual(parseOpts, { agentCount: 12 });
+  assert.equal(plan.concurrency, 2);
+  assert.equal(plan.agents.length, 12);
 });
