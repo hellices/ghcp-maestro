@@ -5,7 +5,7 @@
 
 /** Minimum / maximum number of subtasks a plan may decompose into. */
 export const MIN_PLAN_ENTRIES = 3;
-export const MAX_PLAN_ENTRIES = 6;
+export const MAX_PLAN_ENTRIES = 16;
 
 /** Hard caps that keep child-session prompts focused and cheap. */
 export const MAX_AGENT_NAME_LEN = 60;
@@ -33,12 +33,30 @@ export const MAX_AGENT_ID_LEN = 40;
  *   decomposes against the full spec, not just the one-line trigger.
  * @param {boolean} [writeMode] - write mode (#40): the schema requires a
  *   per-subtask `files` scope and the rules demand disjoint scopes.
+ * @param {{ agentCount?: number }} [sizing] - when supplied, planner must
+ *   return exactly `agentCount` subtasks instead of the automatic 3-16 range.
  * @returns {string}
  */
-export function buildPlanPrompt(task, parserError, previousReply, refsBlock, writeMode) {
+export function buildPlanPrompt(
+  task,
+  parserError,
+  previousReply,
+  refsBlock,
+  writeMode,
+  sizing = {},
+) {
+  const agentCount = sizing.agentCount;
+  const sizingRule =
+    agentCount === undefined
+      ? `Choose between ${MIN_PLAN_ENTRIES} and ${MAX_PLAN_ENTRIES} subtasks based on genuinely independent work units.`
+      : `Return exactly ${agentCount} subtasks.`;
+  const sizingConstraint =
+    agentCount === undefined
+      ? `- ${MIN_PLAN_ENTRIES} <= length <= ${MAX_PLAN_ENTRIES}`
+      : `- length === ${agentCount}`;
   const lines = [
     "You are a planning agent for a dynamic multi-agent workflow runtime.",
-    "Decompose the following task into 3 to 6 subtasks that run in parallel. Subtasks are INDEPENDENT by default and must not assume they can see each other's output.",
+    `Decompose the following task into ${sizingRule} Subtasks are INDEPENDENT by default and must not assume they can see each other's output.`,
     "Each subtask runs in its own isolated Copilot session — there is no shared state, no chat history, no working directory you can rely on. Subtasks must therefore be self-contained: include any context they need inside the prompt itself.",
     "",
     "Reply with ONLY a JSON array. No prose, no markdown fences, no commentary. Schema:",
@@ -47,7 +65,7 @@ export function buildPlanPrompt(task, parserError, previousReply, refsBlock, wri
       : '[ { "agent": "<short kebab-case id, unique>", "prompt": "<self-contained instruction>", "dependsOn": ["<agent>"] }, ... ]',
     "",
     "Rules:",
-    `- ${MIN_PLAN_ENTRIES} <= length <= ${MAX_PLAN_ENTRIES}`,
+    sizingConstraint,
     "- Every entry MUST have non-empty string `agent` and `prompt`",
     "- `agent` values MUST be unique within the array",
     "- `dependsOn` is OPTIONAL: list the `agent` ids whose output this subtask genuinely needs — its prompt will then receive those outputs. Prefer no dependencies (most subtasks should have none), never chain deeper than one dependent of a dependent, and never create cycles.",
@@ -84,8 +102,10 @@ export function buildPlanPrompt(task, parserError, previousReply, refsBlock, wri
  * Throws an Error with a human-readable message on any schema violation.
  *
  * @param {string} text
- * @param {{ requireFiles?: boolean }} [opts] — requireFiles: every entry must
- *   declare a non-empty `files` scope array (write mode, #40)
+ * @param {{ requireFiles?: boolean, agentCount?: number }} [opts] —
+ *   requireFiles: every entry must declare a non-empty `files` scope array
+ *   (write mode, #40); agentCount: exact required subtask count for explicit
+ *   task sizing
  * @returns {{ agent: string, prompt: string, files?: string[], dependsOn?: string[] }[]}
  */
 export function parseAndValidatePlan(text, opts = {}) {
@@ -123,7 +143,12 @@ export function parseAndValidatePlan(text, opts = {}) {
     throw new Error(`JSON.parse failed: ${err.message}`);
   }
   if (!Array.isArray(parsed)) throw new Error("plan must be an array");
-  if (parsed.length < MIN_PLAN_ENTRIES || parsed.length > MAX_PLAN_ENTRIES) {
+  const expectedCount = opts.agentCount;
+  if (expectedCount !== undefined) {
+    if (parsed.length !== expectedCount) {
+      throw new Error(`plan must have exactly ${expectedCount} entries, got ${parsed.length}`);
+    }
+  } else if (parsed.length < MIN_PLAN_ENTRIES || parsed.length > MAX_PLAN_ENTRIES) {
     throw new Error(
       `plan must have ${MIN_PLAN_ENTRIES}-${MAX_PLAN_ENTRIES} entries, got ${parsed.length}`,
     );
