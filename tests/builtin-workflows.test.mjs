@@ -154,7 +154,7 @@ test("task workflow requests and validates an explicit agent count", async () =>
   });
 });
 
-test("task workflow forwards configured concurrency to every explore layer", async () => {
+test("task workflow only forwards configured concurrency to explore phases", async () => {
   await withTempDataDir(async () => {
     const phaseCalls = [];
     const executePhase = async (specs, opts) => {
@@ -184,11 +184,13 @@ test("task workflow forwards configured concurrency to every explore layer", asy
       getAdapter: testAdapter,
       runPhase: executePhase,
     });
-    await runTaskWorkflow(fakeSession(), "--concurrency 2 do the thing");
+    await runTaskWorkflow(fakeSession(), "--concurrency 2 do the thing", { verify: true });
     const explore = phaseCalls.filter((call) => call.phase === "explore");
     assert.ok(explore.length >= 2);
     assert.ok(explore.every((call) => call.concurrency === 2));
     assert.equal(phaseCalls.find((call) => call.phase === "plan").concurrency, undefined);
+    assert.equal(phaseCalls.find((call) => call.phase === "verify").concurrency, undefined);
+    assert.equal(phaseCalls.find((call) => call.phase === "synth").concurrency, undefined);
   });
 });
 
@@ -221,6 +223,27 @@ test("task workflow rejects invalid scaling options before creating a run", asyn
     assert.deepEqual(await listRunIds(dir), []);
     assert.equal(session.logs.length, 1);
     assert.match(session.logs[0], /invalid task options: .*--agents.*integer/i);
+  });
+});
+
+test("task workflow rejects invalid persisted scaling options on resume", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const adapter = () => ({
+      name: "never",
+      async invoke() {
+        throw new Error("should not be invoked");
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: adapter });
+    const run = {
+      runId: "r1",
+      manifest: { args: { task: "--agents nope do the thing" } },
+    };
+    await assert.rejects(
+      () => runTaskWorkflow(session, run.manifest.args.task, { run }),
+      /--agents.*integer/i,
+    );
   });
 });
 

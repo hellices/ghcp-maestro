@@ -55,10 +55,12 @@ test("invalid, duplicate, and empty task options fail", () => {
 
 test("bare leading task options require values", () => {
   assert.throws(() => parseTaskOptions("--agents"), /--agents.*missing value/i);
+  assert.throws(() => parseTaskOptions("--concurrency"), /--concurrency.*missing value/i);
 });
 
 test("bare trailing task options require values", () => {
   assert.throws(() => parseTaskOptions("do work --concurrency"), /--concurrency.*missing value/i);
+  assert.throws(() => parseTaskOptions("do work --agents"), /--agents.*missing value/i);
 });
 
 test("programmatic overrides are validated and serialized canonically", () => {
