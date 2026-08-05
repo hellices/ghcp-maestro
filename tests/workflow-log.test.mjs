@@ -322,3 +322,19 @@ test("agentDigest stays within MAX_AGENT_DIGEST_CHARS with 1000 legal-length nam
   assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
     `digest length ${digest.length} must not exceed ${MAX_AGENT_DIGEST_CHARS}`);
 });
+
+test("agentDigest stays within cap when perEntry floors to 0 (1000 × 58-char names, 1-char bodies)", () => {
+  // Overhead: 1000 × 62 + 999 × 2 = 63 998; bodyBudget = 2.
+  // perEntry must be 0 so the 1-char bodies are dropped; a floor of 1
+  // would let all 1 000 bodies through → 64 998.
+  const results = Array.from({ length: 1000 }, (_, i) => ({
+    spec: { agent: `agent-${String(i).padStart(4, "0")}-${"x".repeat(47)}` },
+    status: "ok",
+    output: { text: "x" },
+    startedAt: 0,
+    finishedAt: 1,
+  }));
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
+    `digest length ${digest.length} must not exceed ${MAX_AGENT_DIGEST_CHARS}`);
+});

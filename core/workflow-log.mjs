@@ -138,7 +138,7 @@ export function agentDigest(results, opts = {}) {
   const overhead = overheadOf(entries);
   if (overhead <= MAX_AGENT_DIGEST_CHARS) {
     const bodyBudget = MAX_AGENT_DIGEST_CHARS - overhead;
-    const perEntry = Math.max(1, Math.floor(bodyBudget / entries.length));
+    const perEntry = Math.floor(bodyBudget / entries.length);
     for (const e of entries) {
       if (e.body.length > perEntry) {
         e.body = perEntry <= MARKER.length ? "" : e.body.slice(0, perEntry - MARKER.length) + MARKER;
