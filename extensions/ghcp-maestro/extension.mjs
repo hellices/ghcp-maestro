@@ -28,7 +28,7 @@ import { installWorkflowCommand } from "../../core/workflow-install.mjs";
 import { composeWorkflowCommand } from "../../core/workflow-compose.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { renderMaestroHelp } from "../../core/help.mjs";
+import { renderMaestroHelp, TASK_COMMAND_SUMMARY } from "../../core/help.mjs";
 import { createMaestroRouter } from "../../core/maestro-router.mjs";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -120,7 +120,7 @@ const MAESTRO_SUBCOMMANDS = [
     name: "task",
     needsArg: "task description",
     background: true,
-    summary: "Decompose a natural-language task into 3-6 subtasks → run each in an isolated child Copilot session in parallel → synth cross-checks them into a final answer.",
+    summary: TASK_COMMAND_SUMMARY,
     run: (arg) => runTaskWorkflow(session, arg),
   },
   {

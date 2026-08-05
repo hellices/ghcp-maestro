@@ -59,6 +59,14 @@ copilot --experimental
 /maestro task 쓰기 많은 멀티테넌트 SaaS 에 PostgreSQL/MySQL/SQLite 를 성능·운영·비용·마이그레이션 부담 기준으로 교차 비교해줘
 ```
 
+**작업자 크기 조절** — 총 작업자 수를 직접 정하거나 동시에 실행할 수를
+제한하고 싶을 때 사용.
+```text
+/maestro task Audit every API route
+/maestro task --agents 12 Audit every package independently
+/maestro task --agents 30 --concurrency 8 Migrate each independent module
+```
+
 **의사결정/트레이드오프 분석** — 단일 결정을 다관점 동시 평가.
 ```text
 /maestro task 모노레포 도입 여부를 툴링·CI·코드 공유·팀 워크플로우·마이그레이션 비용 관점에서 평가하고 권고안을 줘
@@ -108,8 +116,9 @@ copilot --experimental
 
 ## 기능 한눈에 보기
 
-- **작업 자동 분할** — `plan` 에이전트가 3–6 개 서브태스크로 분할, 서브태스크
-  간 `dependsOn` 웨이브 지원.
+- **작업 자동 분할** — `plan` 에이전트가 3–16 개의 자동 크기 조정
+  서브태스크로 분할한다. `--agents` 는 총 작업자 수를 정하고,
+  `--concurrency` 는 동시에 실행할 수를 제한한다.
 - **`@file` 참조** — `/maestro task @docs/spec.md …` 로 마크다운 스펙을 계획과
   모든 서브태스크 프롬프트에 인라인.
 - **쓰기 모드 (opt-in)** — `--write` 로 서브태스크마다 격리된 git worktree +

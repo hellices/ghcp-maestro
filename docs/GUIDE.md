@@ -13,10 +13,22 @@ walkthrough, see [DEMO.md](DEMO.md).
 ### Automatic task decomposition
 
 `/maestro task <natural language>` asks a `plan` agent to break the task into
-3–6 independent subtasks — you describe the goal, it figures out the pieces.
+3–16 independent subtasks — you describe the goal, it figures out the pieces.
 Plans may declare `dependsOn` between subtasks: dependents run in a later
 wave with their dependencies' outputs injected into the prompt, and if a
 dependency fails its dependents are skipped instead of running blind.
+
+Without `--agents`, the planner chooses how many workers the task actually
+needs; `--agents N` sets the total worker count, while `--concurrency N`
+caps how many of those workers run at the same time.
+
+Examples:
+
+```text
+/maestro task Audit every API route
+/maestro task --agents 12 Audit every package independently
+/maestro task --agents 30 --concurrency 8 Migrate each independent module
+```
 
 ### `@file` references — drive a run from a markdown spec
 

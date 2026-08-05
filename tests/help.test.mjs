@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderMaestroHelp, DIAGNOSTICS_HEADER } from "../core/help.mjs";
+import {
+  renderMaestroHelp,
+  DIAGNOSTICS_HEADER,
+  TASK_COMMAND_SUMMARY,
+} from "../core/help.mjs";
 
 const SUBCOMMANDS = [
   { name: "task", needsArg: "task description", summary: "Decompose a task." },
@@ -47,4 +51,10 @@ test("help lists saved workflows only when present", () => {
   assert.doesNotMatch(without, /Saved workflows/);
   const withWf = renderMaestroHelp(SUBCOMMANDS, { savedWorkflows: ["deep-review"] });
   assert.match(withWf, /Saved workflows \(1\): deep-review/);
+});
+
+test("task help explains agent count and concurrency overrides", () => {
+  assert.match(TASK_COMMAND_SUMMARY, /Auto-size 3-16 workers/);
+  assert.match(TASK_COMMAND_SUMMARY, /--agents N/);
+  assert.match(TASK_COMMAND_SUMMARY, /--concurrency N/);
 });

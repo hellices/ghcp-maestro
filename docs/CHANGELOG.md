@@ -7,6 +7,14 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 ## [Unreleased]
 
 ### Added
+- **Configurable `/maestro task` fan-out sizing and concurrency.** `core/help.mjs`
+  now exports the task summary used by the production `/maestro help` output:
+  `/maestro task` auto-sizes to 3–16 workers by default, `--agents N` sets the
+  total worker count, and `--concurrency N` limits simultaneous workers. The
+  English and Korean README/guide docs now use the same terms ("agents" for
+  total workers, "concurrency" for simultaneous workers) and show sizing
+  examples. Saved workflows keep their existing limits: 16 concurrent workers
+  per `spawnAll` call and the 1,000-agent global cap. (#48)
 - **`maestro-top` — standalone live TUI run monitor (opt-in).** New
   `extensions/ghcp-maestro/bin/maestro-top.mjs` viewer runs in its own
   terminal, follows the newest active run (or a given runId, or `--all`
