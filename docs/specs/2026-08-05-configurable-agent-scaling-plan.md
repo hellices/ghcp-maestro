@@ -40,9 +40,8 @@ zero-dependency concurrency and workflow core.
 - Create `core/task-options.mjs` — task-line option constants, parsing,
   validation, override resolution, and canonical serialization.
 - Create `tests/task-options.test.mjs` — pure option-boundary coverage.
-- Modify `core/write-mode.mjs` — import shared write-option constants; remove
-  the superseded write-only parser.
-- Modify `tests/write-mode.test.mjs` — move parsing assertions to the new suite.
+- Modify `core/write-mode.mjs` — import shared write-option constants while
+  retaining the existing compatibility parser.
 - Modify `core/plan.mjs` — automatic/exact sizing prompt and parser policy.
 - Modify `tests/plan-parse.test.mjs` — sizing-policy tests.
 - Modify `core/builtin-workflows.mjs` — resolve/persist options and forward
@@ -61,7 +60,6 @@ zero-dependency concurrency and workflow core.
 - Create: `core/task-options.mjs`
 - Create: `tests/task-options.test.mjs`
 - Modify: `core/write-mode.mjs`
-- Modify: `tests/write-mode.test.mjs`
 
 **Interfaces:**
 - Produces:
@@ -152,9 +150,8 @@ test("programmatic overrides are validated and serialized canonically", () => {
 });
 ```
 
-Move the existing `parseWriteFlags` edge-preservation cases from
-`tests/write-mode.test.mjs` into this suite and extend them with multiline task
-text.
+Add one multiline case to the new suite. Keep the existing
+`tests/write-mode.test.mjs` compatibility coverage unchanged.
 
 - [ ] **Step 2: Run the parser tests and verify RED**
 
@@ -269,10 +266,11 @@ function validateRange(name, value, min, max) {
 }
 ```
 
-In `core/write-mode.mjs`, import `WRITE_FLAG` and `ALLOW_DIRTY_FLAG` from
-`task-options.mjs`, re-export them for compatibility, and delete the old
-`parseWriteFlags`. Update `core/builtin-workflows.mjs` only enough to remove the
-old parser import; full workflow wiring belongs to Task 3.
+In `core/write-mode.mjs`, import and re-export `WRITE_FLAG` and
+`ALLOW_DIRTY_FLAG` from `task-options.mjs`; retain the existing
+`parseWriteFlags` implementation as a backward-compatible write-only parser.
+Leave `core/builtin-workflows.mjs` unchanged in this task so the branch remains
+fully functional between commits. Task 3 migrates it to `parseTaskOptions`.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
@@ -289,7 +287,7 @@ Expected: all focused tests pass.
 ```bash
 npm run check
 git add core/task-options.mjs core/write-mode.mjs \
-  tests/task-options.test.mjs tests/write-mode.test.mjs
+  tests/task-options.test.mjs
 git commit -m "feat: parse configurable task scaling options
 
 Refs #48
