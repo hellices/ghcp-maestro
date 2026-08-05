@@ -49,5 +49,5 @@ export function renderMaestroHelp(subcommands, opts = {}) {
 export const DIAGNOSTICS_HEADER = "Diagnostics (infrastructure smoke tests):";
 
 export const TASK_COMMAND_SUMMARY =
-  "Auto-size 3-16 workers (override with --agents N), " +
-  "run with bounded concurrency (--concurrency N), then synthesize one answer.";
+  "Auto-size 3-16 workers, --agents N controls total workers, " +
+  "--concurrency N controls simultaneous workers, then synthesize one answer.";

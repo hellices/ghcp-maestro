@@ -54,7 +54,11 @@ test("help lists saved workflows only when present", () => {
 });
 
 test("task help explains agent count and concurrency overrides", () => {
-  assert.match(TASK_COMMAND_SUMMARY, /Auto-size 3-16 workers/);
-  assert.match(TASK_COMMAND_SUMMARY, /--agents N/);
-  assert.match(TASK_COMMAND_SUMMARY, /--concurrency N/);
+  const out = renderMaestroHelp(
+    [{ name: "task", needsArg: "task description", summary: TASK_COMMAND_SUMMARY }],
+    { savedWorkflows: [] },
+  );
+  assert.match(out, /Auto-size 3-16 workers/);
+  assert.match(out, /--agents N controls total workers/);
+  assert.match(out, /--concurrency N controls simultaneous workers/);
 });

@@ -14,7 +14,7 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
   English and Korean README/guide docs now use the same terms ("agents" for
   total workers, "concurrency" for simultaneous workers) and show sizing
   examples. Saved workflows keep their existing limits: 16 concurrent workers
-  per `spawnAll` call and the 1,000-agent global cap. (#48)
+  per `spawnAll` call and 1,000 per `spawnAll` call. (#48)
 - **`maestro-top` — standalone live TUI run monitor (opt-in).** New
   `extensions/ghcp-maestro/bin/maestro-top.mjs` viewer runs in its own
   terminal, follows the newest active run (or a given runId, or `--all`
