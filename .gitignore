@@ -9,6 +9,7 @@ yarn-error.log*
 # Scratch dirs used during SDK inspection
 _tmp/
 .tmp/
+.worktrees/
 
 # Editor / OS
 .vscode/
