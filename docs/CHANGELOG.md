@@ -6,6 +6,8 @@ SemVer. Unreleased work is committed under `Unreleased` until a tag is pushed.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-05
+
 ### Added
 - **Configurable `/maestro task` fan-out sizing and concurrency.** The task
   planner automatically sizes to 3–16 subtasks; `--agents N` (1–50) sets the

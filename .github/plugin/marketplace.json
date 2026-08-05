@@ -3,13 +3,13 @@
   "owner": { "name": "ghcp-maestro contributors" },
   "metadata": {
     "description": "Multi-agent workflow runtime for GitHub Copilot CLI.",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "plugins": [
     {
       "name": "ghcp-maestro",
       "description": "Multi-agent workflow runtime — auto-decompose a task, fan out isolated child sessions in parallel, synthesise.",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "license": "MIT",
       "keywords": ["workflow", "subagent", "orchestration", "multi-agent"],
       "source": "."
