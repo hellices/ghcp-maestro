@@ -49,7 +49,9 @@ export function buildPlanPrompt(
   const sizingRule =
     agentCount === undefined
       ? `${MIN_PLAN_ENTRIES} to ${MAX_PLAN_ENTRIES} subtasks that run in parallel.\nChoose between ${MIN_PLAN_ENTRIES} and ${MAX_PLAN_ENTRIES} subtasks based on genuinely independent work units.`
-      : `exactly ${agentCount} subtasks that run in parallel.`;
+      : agentCount === 1
+        ? "exactly 1 subtask that runs in parallel."
+        : `exactly ${agentCount} subtasks that run in parallel.`;
   const sizingConstraint =
     agentCount === undefined
       ? `- ${MIN_PLAN_ENTRIES} <= length <= ${MAX_PLAN_ENTRIES}`

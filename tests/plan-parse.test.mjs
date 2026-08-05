@@ -163,6 +163,12 @@ test("buildPlanPrompt explicit opening sentence includes exact count", () => {
   assert.doesNotMatch(prompt, /into Return/);
 });
 
+test("buildPlanPrompt uses singular subtask for an explicit count of one", () => {
+  const prompt = buildPlanPrompt("T", undefined, undefined, undefined, false, { agentCount: 1 });
+  assert.match(prompt, /into exactly 1 subtask that runs in parallel/);
+  assert.doesNotMatch(prompt, /1 subtasks/);
+});
+
 test("buildPlanPrompt automatic preserves separate rule for choosing count", () => {
   const prompt = buildPlanPrompt("T");
   assert.match(prompt, /Choose between 3 and 16 subtasks based on genuinely independent work units/);
