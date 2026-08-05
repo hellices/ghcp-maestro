@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderMaestroHelp, DIAGNOSTICS_HEADER } from "../core/help.mjs";
+import {
+  renderMaestroHelp,
+  DIAGNOSTICS_HEADER,
+  TASK_COMMAND_SUMMARY,
+} from "../core/help.mjs";
 
 const SUBCOMMANDS = [
   { name: "task", needsArg: "task description", summary: "Decompose a task." },
@@ -42,9 +46,34 @@ test("help always includes the run-management commands", () => {
   assert.match(out, /\/maestro-stop <runId>/);
 });
 
+// --- Source contract: extension.mjs imports TASK_COMMAND_SUMMARY (final-review #12) ---
+
+test("extension.mjs statically imports and uses TASK_COMMAND_SUMMARY", async () => {
+  const { readFileSync } = await import("node:fs");
+  const extensionSrc = readFileSync(
+    new URL("../extensions/ghcp-maestro/extension.mjs", import.meta.url),
+    "utf-8",
+  );
+  assert.ok(
+    extensionSrc.includes("TASK_COMMAND_SUMMARY"),
+    "extension.mjs must import and use TASK_COMMAND_SUMMARY from core/help.mjs",
+  );
+  assert.match(extensionSrc, /import\s*\{[^}]*TASK_COMMAND_SUMMARY[^}]*\}\s*from/);
+});
+
 test("help lists saved workflows only when present", () => {
   const without = renderMaestroHelp(SUBCOMMANDS, { savedWorkflows: [] });
   assert.doesNotMatch(without, /Saved workflows/);
   const withWf = renderMaestroHelp(SUBCOMMANDS, { savedWorkflows: ["deep-review"] });
   assert.match(withWf, /Saved workflows \(1\): deep-review/);
+});
+
+test("task help explains agent count and concurrency overrides", () => {
+  const out = renderMaestroHelp(
+    [{ name: "task", needsArg: "task description", summary: TASK_COMMAND_SUMMARY }],
+    { savedWorkflows: [] },
+  );
+  assert.match(out, /Auto-size 3-16 workers/);
+  assert.match(out, /--agents N controls total workers/);
+  assert.match(out, /--concurrency N controls simultaneous workers/);
 });

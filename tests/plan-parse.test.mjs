@@ -57,16 +57,35 @@ test("parseAndValidatePlan rejects empty and non-array", () => {
   assert.throws(() => parse('"hi"'), /JSON array/);
 });
 
-test("parseAndValidatePlan enforces 3-6 entries", () => {
+test("parseAndValidatePlan enforces automatic 3-16 entries", () => {
   const tooFew = JSON.stringify([
     { agent: "a", prompt: "p" },
     { agent: "b", prompt: "p" },
   ]);
   const tooMany = JSON.stringify(
-    Array.from({ length: 7 }, (_, i) => ({ agent: `a${i}`, prompt: "p" })),
+    Array.from({ length: 17 }, (_, i) => ({ agent: `a${i}`, prompt: "p" })),
   );
-  assert.throws(() => parse(tooFew), /3-6 entries/);
-  assert.throws(() => parse(tooMany), /3-6 entries/);
+  assert.throws(() => parse(tooFew), /3-16 entries/);
+  assert.throws(() => parse(tooMany), /3-16 entries/);
+});
+
+test("parseAndValidatePlan accepts automatic plans up to 16 entries", () => {
+  const plan = JSON.stringify(
+    Array.from({ length: 16 }, (_, i) => ({ agent: `a${i}`, prompt: "p" })),
+  );
+  assert.equal(parse(plan).length, 16);
+});
+
+test("parseAndValidatePlan rejects automatic plans above 16 entries", () => {
+  const plan = JSON.stringify(
+    Array.from({ length: 17 }, (_, i) => ({ agent: `a${i}`, prompt: "p" })),
+  );
+  assert.throws(() => parse(plan), /3-16 entries/);
+});
+
+test("parseAndValidatePlan enforces exact explicit counts", () => {
+  assert.throws(() => parse(VALID, { agentCount: 4 }), /exactly 4 entries/);
+  assert.equal(parse(VALID, { agentCount: 3 }).length, 3);
 });
 
 test("parseAndValidatePlan rejects duplicate agent names", () => {
@@ -117,8 +136,42 @@ test("buildPlanPrompt includes the task and schema rules", () => {
   const prompt = buildPlanPrompt("Build a CLI tool");
   assert.match(prompt, /Build a CLI tool/);
   assert.match(prompt, /JSON array/);
-  assert.match(prompt, /3 <= length <= 6/);
+  assert.match(prompt, /3 <= length <= 16/);
   assert.doesNotMatch(prompt, /could not be parsed/);
+});
+
+test("buildPlanPrompt distinguishes automatic and explicit sizing", () => {
+  assert.match(buildPlanPrompt("T"), /choose between 3 and 16/i);
+  assert.match(
+    buildPlanPrompt("T", undefined, undefined, undefined, false, { agentCount: 12 }),
+    /exactly 12/i,
+  );
+});
+
+// --- Planner prompt grammar (final-review #1) --------------------------------
+
+test("buildPlanPrompt automatic opening sentence is grammatical", () => {
+  const prompt = buildPlanPrompt("Build a CLI tool");
+  // Must read "into 3 to 16 subtasks that run in parallel" — not "into Choose…"
+  assert.match(prompt, /into 3 to 16 subtasks that run in parallel/);
+  assert.doesNotMatch(prompt, /into Choose/);
+});
+
+test("buildPlanPrompt explicit opening sentence includes exact count", () => {
+  const prompt = buildPlanPrompt("T", undefined, undefined, undefined, false, { agentCount: 7 });
+  assert.match(prompt, /into exactly 7 subtasks that run in parallel/);
+  assert.doesNotMatch(prompt, /into Return/);
+});
+
+test("buildPlanPrompt uses singular subtask for an explicit count of one", () => {
+  const prompt = buildPlanPrompt("T", undefined, undefined, undefined, false, { agentCount: 1 });
+  assert.match(prompt, /into exactly 1 subtask that runs in parallel/);
+  assert.doesNotMatch(prompt, /1 subtasks/);
+});
+
+test("buildPlanPrompt automatic preserves separate rule for choosing count", () => {
+  const prompt = buildPlanPrompt("T");
+  assert.match(prompt, /Choose between 3 and 16 subtasks based on genuinely independent work units/);
 });
 
 test("buildPlanPrompt appends parser feedback on retry", () => {

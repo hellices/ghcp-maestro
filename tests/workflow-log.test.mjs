@@ -11,6 +11,8 @@ import {
   logExploreResults,
   labeledDumpLine,
   synthStatusLine,
+  MAX_AGENT_OUTPUT_CHARS,
+  MAX_AGENT_DIGEST_CHARS,
 } from "../core/workflow-log.mjs";
 
 // A minimal AgentResult-like shape, matching what spawnAll returns.
@@ -195,6 +197,47 @@ test("agentDigest treats results without a status as ok (back-compat)", () => {
   assert.equal(digest, "## a\no");
 });
 
+// --- Bounded agent digest (final-review #2) ----------------------------------
+
+test("agentDigest exports MAX constants for per-agent and total caps", () => {
+  assert.equal(typeof MAX_AGENT_OUTPUT_CHARS, "number");
+  assert.equal(MAX_AGENT_OUTPUT_CHARS, 4_000);
+  assert.equal(typeof MAX_AGENT_DIGEST_CHARS, "number");
+  assert.equal(MAX_AGENT_DIGEST_CHARS, 64_000);
+});
+
+test("agentDigest preserves byte-identical output for small runs", () => {
+  const results = [res("tech", "ok", "  point A  "), res("ux", "ok", "point B")];
+  assert.equal(agentDigest(results), "## tech\npoint A\n\n## ux\npoint B");
+});
+
+test("agentDigest truncates large outputs and stays within MAX_AGENT_DIGEST_CHARS", () => {
+  const longOutput = "x".repeat(8_000);
+  const results = Array.from({ length: 50 }, (_, i) =>
+    res(`agent-${i}`, "ok", longOutput),
+  );
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS, `digest length ${digest.length} exceeds cap ${MAX_AGENT_DIGEST_CHARS}`);
+  // Every agent heading is preserved.
+  for (let i = 0; i < 50; i++) {
+    assert.ok(digest.includes(`## agent-${i}`), `missing heading for agent-${i}`);
+  }
+  // Truncated bodies carry the marker.
+  assert.ok(digest.includes("…[truncated]"), "truncated entries should carry the marker");
+});
+
+test("agentDigest truncates failed-agent error text and keeps heading", () => {
+  const longError = "E".repeat(8_000);
+  const results = Array.from({ length: 50 }, (_, i) =>
+    ({ spec: { agent: `err-${i}` }, status: "error", error: longError, startedAt: 0, finishedAt: 1 }),
+  );
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS);
+  for (let i = 0; i < 50; i++) {
+    assert.ok(digest.includes(`## err-${i}`), `missing heading for err-${i}`);
+  }
+});
+
 test("coverageLine summarises ok vs failed subtasks", () => {
   const mk = (agent, status) => ({ spec: { agent }, status });
   assert.equal(
@@ -205,4 +248,93 @@ test("coverageLine summarises ok vs failed subtasks", () => {
     coverageLine("r1", [mk("a", "error"), mk("b", "skipped"), mk("c", "ok"), mk("d", "timeout")]),
     "ghcp-maestro/r1: coverage: 1/4 subtasks ok (1 error, 1 skipped, 1 timeout)",
   );
+});
+
+// --- Per-agent digest cap (re-review #3) -------------------------------------
+
+test("agentDigest caps one huge success output to MAX_AGENT_OUTPUT_CHARS including marker", () => {
+  const hugeBody = "x".repeat(10_000);
+  const digest = agentDigest([res("big", "ok", hugeBody)]);
+  const bodyStart = digest.indexOf("\n") + 1;
+  const body = digest.slice(bodyStart);
+  assert.ok(body.length <= MAX_AGENT_OUTPUT_CHARS,
+    `body length ${body.length} exceeds per-agent cap ${MAX_AGENT_OUTPUT_CHARS}`);
+  assert.ok(body.endsWith("…[truncated]"), "capped body must carry truncation marker");
+});
+
+test("agentDigest caps failure reason to MAX_AGENT_OUTPUT_CHARS", () => {
+  const hugeError = "E".repeat(10_000);
+  const digest = agentDigest([{ spec: { agent: "fail" }, status: "error", error: hugeError, startedAt: 0, finishedAt: 1 }]);
+  const headingEnd = digest.indexOf("\n") + 1;
+  const body = digest.slice(headingEnd);
+  assert.ok(body.length <= MAX_AGENT_OUTPUT_CHARS,
+    `failure body ${body.length} exceeds per-agent cap ${MAX_AGENT_OUTPUT_CHARS}`);
+});
+
+test("agentDigest preserves 50 headings with per-agent cap and stays within total cap", () => {
+  const results = Array.from({ length: 50 }, (_, i) =>
+    res(`agent-${i}`, "ok", "x".repeat(8_000)),
+  );
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS);
+  for (let i = 0; i < 50; i++) {
+    assert.ok(digest.includes(`## agent-${i}`), `missing heading for agent-${i}`);
+  }
+});
+
+// --- Arbitrary large digest inputs (re-review #4) ----------------------------
+
+test("agentDigest handles 1000 results with long names and long bodies", () => {
+  const longName = "agent-" + "x".repeat(55);
+  const longBody = "B".repeat(10_000);
+  const results = Array.from({ length: 1000 }, (_, i) => ({
+    spec: { agent: `${longName}-${i}` },
+    status: "ok",
+    output: { text: longBody },
+    startedAt: 0,
+    finishedAt: 1,
+  }));
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
+    `digest length ${digest.length} exceeds cap ${MAX_AGENT_DIGEST_CHARS}`);
+  const headingCount = (digest.match(/^## /gm) || []).length;
+  if (headingCount < 1000) {
+    assert.ok(digest.includes("omitted"), "must disclose omitted agents");
+  }
+});
+
+test("agentDigest stays within MAX_AGENT_DIGEST_CHARS with 1000 legal-length names (marker overflow)", () => {
+  // 1000 entries with 48-55 char names: headings consume most of the 64 000
+  // budget, leaving perEntry < MARKER.length — the marker itself must not
+  // push the total over the cap.
+  const results = Array.from({ length: 1000 }, (_, i) => {
+    const nameLen = 48 + (i % 8);
+    const name = `agent-${String(i).padStart(4, "0")}-${"x".repeat(nameLen - 11)}`;
+    return {
+      spec: { agent: name },
+      status: "ok",
+      output: { text: "x".repeat(100) },
+      startedAt: 0,
+      finishedAt: 1,
+    };
+  });
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
+    `digest length ${digest.length} must not exceed ${MAX_AGENT_DIGEST_CHARS}`);
+});
+
+test("agentDigest stays within cap when perEntry floors to 0 (1000 × 58-char names, 1-char bodies)", () => {
+  // Overhead: 1000 × 62 + 999 × 2 = 63 998; bodyBudget = 2.
+  // perEntry must be 0 so the 1-char bodies are dropped; a floor of 1
+  // would let all 1 000 bodies through → 64 998.
+  const results = Array.from({ length: 1000 }, (_, i) => ({
+    spec: { agent: `agent-${String(i).padStart(4, "0")}-${"x".repeat(47)}` },
+    status: "ok",
+    output: { text: "x" },
+    startedAt: 0,
+    finishedAt: 1,
+  }));
+  const digest = agentDigest(results);
+  assert.ok(digest.length <= MAX_AGENT_DIGEST_CHARS,
+    `digest length ${digest.length} must not exceed ${MAX_AGENT_DIGEST_CHARS}`);
 });

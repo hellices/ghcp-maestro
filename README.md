@@ -66,6 +66,14 @@ keep only what survives scrutiny.
 /maestro task Compare PostgreSQL, MySQL, and SQLite for a write-heavy multi-tenant SaaS, cross-checking performance, operations, cost, and migration effort
 ```
 
+**Sizing workers** — ask for a specific total worker count or cap simultaneous
+workers when you need tighter control.
+```text
+/maestro task Audit every API route
+/maestro task --agents 12 Audit every package independently
+/maestro task --agents 30 --concurrency 8 Migrate each independent module
+```
+
 **Decision / trade-off analysis** — evaluate one decision from multiple lenses
 at once.
 ```text
@@ -118,8 +126,10 @@ it as its own command, or install someone else's straight from GitHub:
 
 ## Features at a glance
 
-- **Automatic task decomposition** — a `plan` agent splits the task into 3–6
-  subtasks, with optional `dependsOn` waves between them.
+- **Automatic task decomposition** — a `plan` agent automatically sizes the
+  task into 3–16 subtasks; `--agents N` (1–50) sets the exact total worker
+  count, while `--concurrency N` (1–16) limits how many run at once.
+  Duplicate options are rejected.
 - **`@file` references** — `/maestro task @docs/spec.md …` inlines a markdown
   spec into the plan and every subtask prompt.
 - **Write mode (opt-in)** — `--write` gives each subtask an isolated git

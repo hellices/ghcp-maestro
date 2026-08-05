@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBuiltinWorkflows } from "../core/builtin-workflows.mjs";
@@ -46,13 +46,22 @@ async function withTempDataDir(fn) {
   process.env.GHCP_MAESTRO_DATA_DIR = dir;
   process.env.GHCP_MAESTRO_NO_MONITOR = "1";
   try {
-    return await fn();
+    return await fn(dir);
   } finally {
     if (prevData === undefined) delete process.env.GHCP_MAESTRO_DATA_DIR;
     else process.env.GHCP_MAESTRO_DATA_DIR = prevData;
     if (prevMon === undefined) delete process.env.GHCP_MAESTRO_NO_MONITOR;
     else process.env.GHCP_MAESTRO_NO_MONITOR = prevMon;
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function listRunIds(baseDir) {
+  try {
+    return await readdir(join(baseDir, "runs"));
+  } catch (err) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
   }
 }
 
@@ -114,6 +123,127 @@ test("task workflow logs a run-size estimate before the gate", async () => {
     const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter });
     await runTaskWorkflow(session, "do the thing");
     assert.ok(session.logs.some((l) => /est\. run size: medium \(5 agents incl\. plan\+synth\)/.test(l)));
+  });
+});
+
+test("task workflow requests and validates an explicit agent count", async () => {
+  await withTempDataDir(async () => {
+    let planPrompt;
+    const adapter = () => ({
+      name: "explicit-count",
+      async invoke(spec) {
+        if (spec.agent === "plan") {
+          planPrompt = spec.prompt;
+          return {
+            text: JSON.stringify(
+              Array.from({ length: 4 }, (_, i) => ({
+                agent: `a${i}`,
+                prompt: `p${i}`,
+              })),
+            ),
+          };
+        }
+        return { text: `out-${spec.agent}` };
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: adapter });
+    const run = await runTaskWorkflow(fakeSession(), "--agents 4 do the thing");
+    assert.equal(run.manifest.status, "complete");
+    assert.match(planPrompt, /exactly 4/i);
+    assert.equal(run.manifest.args.task, "--agents 4 do the thing");
+  });
+});
+
+test("task workflow only forwards configured concurrency to explore phases", async () => {
+  await withTempDataDir(async () => {
+    const phaseCalls = [];
+    const executePhase = async (specs, opts) => {
+      phaseCalls.push({ phase: opts.phase, concurrency: opts.concurrency });
+      return {
+        results: specs.map((spec) => ({
+          id: spec.id,
+          spec,
+          status: "ok",
+          output: {
+            text:
+              spec.agent === "plan"
+                ? JSON.stringify([
+                    { agent: "a", prompt: "pa" },
+                    { agent: "b", prompt: "pb", dependsOn: ["a"] },
+                    { agent: "c", prompt: "pc" },
+                  ])
+                : `out-${spec.agent}`,
+          },
+          startedAt: 1,
+          finishedAt: 2,
+        })),
+        elapsedMs: 1,
+      };
+    };
+    const { runTaskWorkflow } = createBuiltinWorkflows({
+      getAdapter: testAdapter,
+      runPhase: executePhase,
+    });
+    await runTaskWorkflow(fakeSession(), "--concurrency 2 do the thing", { verify: true });
+    const explore = phaseCalls.filter((call) => call.phase === "explore");
+    assert.ok(explore.length >= 2);
+    assert.ok(explore.every((call) => call.concurrency === 2));
+    assert.equal(phaseCalls.find((call) => call.phase === "plan").concurrency, undefined);
+    assert.equal(phaseCalls.find((call) => call.phase === "verify").concurrency, undefined);
+    assert.equal(phaseCalls.find((call) => call.phase === "synth").concurrency, undefined);
+  });
+});
+
+test("programmatic scaling options persist for resume", async () => {
+  await withTempDataDir(async () => {
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: testAdapter });
+    const run = await runTaskWorkflow(fakeSession(), "do the thing", {
+      agents: 3,
+      concurrency: 4,
+    });
+    assert.equal(run.manifest.args.task, "--agents 3 --concurrency 4 do the thing");
+  });
+});
+
+test("task workflow rejects invalid scaling options before creating a run", async () => {
+  await withTempDataDir(async (dir) => {
+    let invoked = 0;
+    const adapter = () => ({
+      name: "never",
+      async invoke() {
+        invoked += 1;
+        return { text: "[]" };
+      },
+    });
+    const session = fakeSession();
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: adapter });
+    const run = await runTaskWorkflow(session, "--agents nope do the thing");
+    assert.equal(run, null);
+    assert.equal(invoked, 0);
+    assert.deepEqual(await listRunIds(dir), []);
+    assert.equal(session.logs.length, 1);
+    assert.match(session.logs[0], /task options: .*--agents.*integer/i);
+  });
+});
+
+test("task workflow rejects invalid persisted scaling options on resume", async () => {
+  await withTempDataDir(async () => {
+    const session = fakeSession();
+    const adapter = () => ({
+      name: "never",
+      async invoke() {
+        throw new Error("should not be invoked");
+      },
+    });
+    const { runTaskWorkflow } = createBuiltinWorkflows({ getAdapter: adapter });
+    const run = {
+      runId: "r1",
+      manifest: { args: { task: "--agents nope do the thing" } },
+    };
+    await assert.rejects(
+      () => runTaskWorkflow(session, run.manifest.args.task, { run }),
+      /--agents.*integer/i,
+    );
   });
 });
 

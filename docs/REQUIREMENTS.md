@@ -114,7 +114,7 @@ Scripts directly import the adapter (`{ adapter: standalone }`) — no mode flag
 
 - When `/maestro task <natural-language>` is called (M4 implementation):
   1. A `plan` agent (standalone child session) analyzes the task with a meta prompt → generates a `[{agent, prompt}]` JSON array
-  2. The parser validates the schema (3-6 entries, no duplicates, etc.); on failure, retry once with parser-error included
+  2. The parser validates the schema (3-16 entries, no duplicates, etc.); on failure, retry once with parser-error included
   3. spec array → `spawnAll(standaloneAdapter)` true parallelism
   4. A `synth` agent cross-checks results and produces the final answer
 - Pre-approval gate (subtask list + each prompt preview) implemented in M4.x — on an interactive host the user approves, runs a subset, or aborts before fan-out; non-interactive hosts auto-approve. See `runtime/plan-approval.mjs`.

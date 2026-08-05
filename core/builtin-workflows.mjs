@@ -20,10 +20,8 @@ import { TIMEOUT_AGENT_MS } from "./timeouts.mjs";
 import { isTruthyEnv } from "./env-flags.mjs";
 import { buildPlanPrompt, parseAndValidatePlan, sanitizeAgentName, planLayers, augmentPromptWithDeps } from "./plan.mjs";
 import { parseFileRefs, loadFileRefs, buildFileRefsBlock } from "./task-inputs.mjs";
+import { parseTaskOptions, serializeTaskOptions } from "./task-options.mjs";
 import {
-  parseWriteFlags,
-  WRITE_FLAG,
-  ALLOW_DIRTY_FLAG,
   assertWritableRepo,
   validateDisjointScopes,
   createWorktrees,
@@ -69,11 +67,13 @@ function withModel(model) {
  * @param {{
  *   getAdapter: () => import("./spawn.mjs").SubagentAdapter,
  *   env?: Record<string, string | undefined>,
+ *   runPhase?: typeof import("./run-phase.mjs").runPhase,
  * }} deps
  */
 export function createBuiltinWorkflows(deps) {
   const getAdapter = deps.getAdapter;
   const env = deps.env ?? process.env;
+  const executePhase = deps.runPhase ?? runPhase;
 
   /** Log the "running in background — watch with /maestros" hint for fresh runs. */
   async function logBackgroundHint(session, runId, opts) {
@@ -112,7 +112,7 @@ export function createBuiltinWorkflows(deps) {
       prompt: `Reply with the single word ${word}. No punctuation, no explanation.`,
       timeoutMs: TIMEOUT_AGENT_MS,
     }));
-    const { results: exploreResults, elapsedMs: phase1Elapsed } = await runPhase(exploreSpecs, {
+    const { results: exploreResults, elapsedMs: phase1Elapsed } = await executePhase(exploreSpecs, {
       run,
       runId,
       phase: "explore",
@@ -137,7 +137,7 @@ export function createBuiltinWorkflows(deps) {
     const {
       results: [synth],
       elapsedMs: phase2Elapsed,
-    } = await runPhase([synthSpec], { run, runId, phase: "synth", adapter });
+    } = await executePhase([synthSpec], { run, runId, phase: "synth", adapter });
     const synthText = (synth.output?.text ?? "").trim();
     await session.log(
       `ghcp-maestro/${runId}: synth status=${synth.status}${synth.cached ? " (cached)" : ""} took=${synth.finishedAt - synth.startedAt}ms wall=${phase2Elapsed}ms reply=${JSON.stringify(synthText.slice(0, 80))}`,
@@ -210,7 +210,7 @@ export function createBuiltinWorkflows(deps) {
       timeoutMs: TIMEOUT_AGENT_MS,
     }));
 
-    const { results, elapsedMs: phase1Elapsed } = await runPhase(specs, {
+    const { results, elapsedMs: phase1Elapsed } = await executePhase(specs, {
       run,
       runId,
       phase: "explore",
@@ -251,7 +251,7 @@ export function createBuiltinWorkflows(deps) {
     const {
       results: [synth],
       elapsedMs: phase2Elapsed,
-    } = await runPhase([synthSpec], { run, runId, phase: "synth", adapter });
+    } = await executePhase([synthSpec], { run, runId, phase: "synth", adapter });
     await session.log(synthStatusLine(runId, synth));
     await session.log(labeledDumpLine(runId, "TOP 3 NEXT STEPS", synth));
 
@@ -318,12 +318,23 @@ export function createBuiltinWorkflows(deps) {
    * subagent that already succeeded is replayed from cache on /maestro-resume.
    */
   async function runTaskWorkflow(session, rawTask, opts = {}) {
-    // Write mode (#40): strictly opt-in — via --write on the task line or the
-    // opts.write escape hatch (used by other surfaces/tests). The manifest
-    // task line carries the EFFECTIVE flags (see manifestTask below), so
-    // resume replays the same mode even when it was enabled via opts.write.
-    const flags = parseWriteFlags(rawTask);
-    const writeMode = flags.write || opts.write === true;
+    let taskOptions;
+    try {
+      taskOptions = parseTaskOptions(rawTask, {
+        write: opts.write,
+        allowDirty: opts.allowDirty,
+        agents: opts.agents,
+        concurrency: opts.concurrency,
+      });
+    } catch (err) {
+      if (opts.run) throw err;
+      await session.log(`ghcp-maestro: ${err.message}`, {
+        level: "error",
+      });
+      return null;
+    }
+    const writeMode = taskOptions.write;
+    const concurrency = taskOptions.concurrency ?? DEFAULT_CONCURRENCY;
     const gitExec = opts.gitExec; // injectable for tests; undefined = real git
     let targetBranch;
     if (writeMode) {
@@ -331,7 +342,7 @@ export function createBuiltinWorkflows(deps) {
         ({ branch: targetBranch } = await assertWritableRepo({
           exec: gitExec,
           cwd: opts.cwd,
-          allowDirty: flags.allowDirty || opts.allowDirty === true,
+          allowDirty: taskOptions.allowDirty,
         }));
       } catch (err) {
         if (opts.run) throw err;
@@ -340,25 +351,12 @@ export function createBuiltinWorkflows(deps) {
       }
     }
     // @file references (#39): resolve before the run exists so a bad path
-    // costs nothing. The manifest keeps the RAW line — resume replays the
-    // same resolution (and correctly fails if the spec file disappeared).
-    // Flag stripping only applies in write mode — a read-only task keeps its
-    // text verbatim (e.g. a question ABOUT "--allow-dirty").
-    const inputs = await resolveTaskInputs(session, writeMode ? flags.task : rawTask, opts);
+    // costs nothing. The manifest keeps the canonical task-options line —
+    // resume replays the same effective flags and scaling controls.
+    const inputs = await resolveTaskInputs(session, taskOptions.task, opts);
     if (!inputs) return null;
     const { task, refsBlock } = inputs;
-    // The manifest line must carry the EFFECTIVE flags — write mode enabled
-    // via opts.write alone would otherwise be silently off on /maestro-resume
-    // (resume replays only the manifest's raw line).
-    const manifestTask = writeMode
-      ? [
-          WRITE_FLAG,
-          flags.allowDirty || opts.allowDirty === true ? ALLOW_DIRTY_FLAG : null,
-          flags.task,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : rawTask;
+    const manifestTask = serializeTaskOptions(taskOptions);
     const run = opts.run ?? (await createRun({ workflow: "task", args: { task: manifestTask } }));
     const runId = run.runId;
     const adapter = getAdapter();
@@ -379,8 +377,9 @@ export function createBuiltinWorkflows(deps) {
     // Model routing (#17): opt-in per-label model map ("plan" / "explore:<agent>"
     // / "synth"). Null routes = every agent uses the adapter's default model.
     const routes = opts.modelRoutes ?? envModelRoutes(env);
+    const sizing = taskOptions.agents === undefined ? "auto(3-16)" : taskOptions.agents;
     await session.log(
-      `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, concurrency=${DEFAULT_CONCURRENCY}, dir=${run.runDir})`,
+      `ghcp-maestro/${runId}: task "${task.slice(0, 80)}" (adapter=${adapter.name}, agents=${sizing}, concurrency=${concurrency}, dir=${run.runDir})`,
     );
     if (writeMode) {
       await session.log(
@@ -401,12 +400,14 @@ export function createBuiltinWorkflows(deps) {
       id: "plan",
       agent: "plan",
       timeoutMs: TIMEOUT_AGENT_MS,
-      prompt: buildPlanPrompt(task, undefined, undefined, refsBlock, writeMode),
+      prompt: buildPlanPrompt(task, undefined, undefined, refsBlock, writeMode, {
+        agentCount: taskOptions.agents,
+      }),
       ...withModel(resolveModel("plan", routes)),
     };
     const {
       results: [planResult],
-    } = await runPhase([planSpec], { run, runId, phase: "plan", adapter, budget });
+    } = await executePhase([planSpec], { run, runId, phase: "plan", adapter, budget });
     if (planResult.status !== "ok") {
       return failRun(
         session,
@@ -426,7 +427,10 @@ export function createBuiltinWorkflows(deps) {
     // sanitized id — a collision would silently share a worktree). Both throw
     // a human-readable message the planner can retry against.
     const validatePlanText = (text) => {
-      const parsed = parseAndValidatePlan(text, { requireFiles: writeMode });
+      const parsed = parseAndValidatePlan(text, {
+        requireFiles: writeMode,
+        agentCount: taskOptions.agents,
+      });
       if (writeMode) {
         // validateDisjointScopes returns the NORMALIZED scopes — use those
         // everywhere downstream (worktree prompts) so raw model output can't
@@ -466,12 +470,14 @@ export function createBuiltinWorkflows(deps) {
         id: "plan-retry",
         agent: "plan",
         timeoutMs: TIMEOUT_AGENT_MS,
-        prompt: buildPlanPrompt(task, err.message, planText, refsBlock, writeMode),
+        prompt: buildPlanPrompt(task, err.message, planText, refsBlock, writeMode, {
+          agentCount: taskOptions.agents,
+        }),
         ...withModel(resolveModel("plan", routes)),
       };
       const {
         results: [retryResult],
-      } = await runPhase([retrySpec], { run, runId, phase: "plan", adapter, budget });
+      } = await executePhase([retrySpec], { run, runId, phase: "plan", adapter, budget });
       if (retryResult.status !== "ok") {
         return failRun(
           session,
@@ -659,12 +665,13 @@ export function createBuiltinWorkflows(deps) {
         );
       }
       if (runnable.length === 0) continue;
-      const { results, elapsedMs } = await runPhase(runnable, {
+      const { results, elapsedMs } = await executePhase(runnable, {
         run,
         runId,
         phase: "explore",
         adapter,
         budget,
+        concurrency,
       });
       phase1Elapsed += elapsedMs;
       for (const r of results) resultByAgent.set(r.spec.agent, r);
@@ -888,7 +895,7 @@ export function createBuiltinWorkflows(deps) {
       };
       const {
         results: [verify],
-      } = await runPhase([verifySpec], { run, runId, phase: "verify", adapter, budget });
+      } = await executePhase([verifySpec], { run, runId, phase: "verify", adapter, budget });
       if (verify.status === "ok") {
         verifyReport = (verify.output?.text ?? "").trim() || undefined;
         await session.log(labeledDumpLine(runId, "VERIFY REPORT", verify));
@@ -915,7 +922,7 @@ export function createBuiltinWorkflows(deps) {
     const {
       results: [synth],
       elapsedMs: phase2Elapsed,
-    } = await runPhase([synthSpec], { run, runId, phase: "synth", adapter, budget });
+    } = await executePhase([synthSpec], { run, runId, phase: "synth", adapter, budget });
     await session.log(synthStatusLine(runId, synth, { wallMs: phase2Elapsed }));
     await session.log(coverageLine(runId, exploreResults));
     await session.log(labeledDumpLine(runId, "FINAL ANSWER", synth));

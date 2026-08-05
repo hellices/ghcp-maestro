@@ -15,10 +15,10 @@
 import { execFile, exec as execShell } from "node:child_process";
 import { mkdir as fsMkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { WRITE_FLAG, ALLOW_DIRTY_FLAG } from "./task-options.mjs";
 
 /** Flags recognized at the edges of the /maestro task line. */
-export const WRITE_FLAG = "--write";
-export const ALLOW_DIRTY_FLAG = "--allow-dirty";
+export { WRITE_FLAG, ALLOW_DIRTY_FLAG };
 
 /**
  * Extract write-mode flags from a raw task line. Pure. Flags are recognized
@@ -27,6 +27,10 @@ export const ALLOW_DIRTY_FLAG = "--allow-dirty";
  * instruction to enter write mode. Unknown `--` tokens are always left in
  * the text.
  *
+ * @deprecated Use `parseTaskOptions` from `core/task-options.mjs` instead —
+ *   it handles `--write`, `--allow-dirty`, `--agents`, and `--concurrency`
+ *   in a unified parser with range validation and duplicate rejection.
+ *   This function is retained for backward compatibility only.
  * @param {string} raw
  * @returns {{ write: boolean, allowDirty: boolean, task: string }}
  */

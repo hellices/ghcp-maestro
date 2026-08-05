@@ -11,11 +11,24 @@ ghcp-maestro 가 하는 일과 모든 설정을 다루는 상세 문서.
 
 ### 작업 자동 분할
 
-`/maestro task <자연어>` 는 `plan` 에이전트에게 작업을 3–6 개의 독립적인 하위
+`/maestro task <자연어>` 는 `plan` 에이전트에게 작업을 3–16 개의 독립적인 하위
 작업으로 쪼개게 한다 — 목표만 설명하면 조각은 알아서 나눈다. 계획은 하위 작업
 간 `dependsOn` 을 선언할 수 있다: 의존하는 작업은 다음 웨이브에서 의존 대상의
 출력이 프롬프트에 주입된 채 실행되고, 의존 대상이 실패하면 무작정 실행하는
 대신 건너뛴다.
+
+`--agents` 가 없으면 planner 가 3–16 범위에서 작업자 수를 자동 결정한다.
+`--agents N` (1–50) 은 총 작업자 수를 고정하고, `--concurrency N` (1–16) 은
+그중 동시에 실행할 수를 제한한다. 동일 옵션 중복
+(예: `--agents 5 … --agents 10`) 은 거부된다.
+
+예시:
+
+```text
+/maestro task Audit every API route
+/maestro task --agents 12 Audit every package independently
+/maestro task --agents 30 --concurrency 8 Migrate each independent module
+```
 
 ### `@file` 참조 — 마크다운 스펙으로 run 구동
 
