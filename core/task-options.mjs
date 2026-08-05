@@ -11,6 +11,8 @@ const LEADING_OPTION_RE =
   /^(?:(--write|--allow-dirty)(?=\s|$)|(--agents|--concurrency)\s+(\S+)(?=\s|$))(?:\s+|$)/;
 const TRAILING_OPTION_RE =
   /(?:^|\s)(?:(--write|--allow-dirty)|(--agents|--concurrency)\s+(\S+))$/;
+const BARE_EDGE_OPTION_RE =
+  /^(--agents|--concurrency)(?=\s|$)|(?:^|\s)(--agents|--concurrency)$/;
 
 export function parseTaskOptions(raw, overrides = {}) {
   const parsed = parseEdgeOptions(String(raw ?? ""));
@@ -76,6 +78,11 @@ function parseEdgeOptions(raw) {
   while ((match = state.task.match(TRAILING_OPTION_RE))) {
     take(match[1] ?? match[2], match[3]);
     state.task = state.task.slice(0, match.index).trimEnd();
+  }
+  const bare = state.task.match(BARE_EDGE_OPTION_RE);
+  if (bare) {
+    const name = bare[1] ?? bare[2];
+    throw new Error(`task options: ${name} missing value`);
   }
   state.task = state.task.trim();
   return state;

@@ -53,6 +53,14 @@ test("invalid, duplicate, and empty task options fail", () => {
   assert.throws(() => parseTaskOptions("--agents 4"), /task description/i);
 });
 
+test("bare leading task options require values", () => {
+  assert.throws(() => parseTaskOptions("--agents"), /--agents.*missing value/i);
+});
+
+test("bare trailing task options require values", () => {
+  assert.throws(() => parseTaskOptions("do work --concurrency"), /--concurrency.*missing value/i);
+});
+
 test("programmatic overrides are validated and serialized canonically", () => {
   const options = parseTaskOptions("--write migrate", { agents: 30, concurrency: 16 });
   assert.equal(
